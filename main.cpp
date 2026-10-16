@@ -177,31 +177,41 @@ public:
         appDetails->setObjectName("appDetailsPage");
         pages->addWidget(appDetails);
         history.append({pages->currentWidget()}); historyIndex = 0;
-        explore->onOpen = [this](const DemoApp &app) { openDetails(app); };
+        appDetails->backend = &backend;
+        explore->onOpen = [this](const CatalogApp &app) { openDetails(app); };
         appDetails->onBack = [this] { moveHistory(-1); };
-        appDetails->onOpenAddon = [this](const DemoApp &app) { openDetails(app); };
+        appDetails->onOpenAddon = [this](const CatalogApp &app) { openDetails(app); };
         qApp->installEventFilter(this);
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
         connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); });
         connect(&backend, &Backend::issue, this, [this](const QString &message) {
             statusBar()->showMessage(message);
         });
+        connect(&backend, &Backend::catalogReady, this, [this] {
+            explore->notice->setText("Repository apps have no icons or descriptions yet. Install them with: sudo pacman -S --needed archlinux-appstream-data");
+            explore->notice->setVisible(backend.osMetadataMissing);
+            explore->setCatalog();
+        });
+        connect(&backend, &Backend::rankingsReady, this, [this] { explore->setCatalog(); });
+        // Checks and previews use a small fixed catalogue instead of the live sources.
         if (loadCatalogue) backend.load();
+        else if (!backend.loadFixture(WOOFSTORE_FIXTURES "/catalog.json")) qWarning("Cannot read the test catalogue in " WOOFSTORE_FIXTURES);
     }
 
     void selectPage(int page) {
         if (!navigation->button(page)) return;
         const bool enteringInstalled = page == 1 && pages->currentIndex() != 1;
-        if (pages->currentWidget() != pages->widget(page)) pushHistory({pages->widget(page), {}, {}, "Flatpak", page});
+        if (pages->currentWidget() != pages->widget(page)) pushHistory({pages->widget(page), {}, {}, page});
         if (enteringInstalled && inventoryEnabled) backend.loadInstalled();
     }
 
     void previewInstalled() {
         backend.installed.clear();
-        for (int index : {7, 3, 0, 4, 1, 2}) {
-            const auto &sample = explore->apps[index]; App app;
-            app.id = sample.id; app.name = sample.name; app.summary = sample.summary;
-            app.source = "Flatpak"; app.remote = "flathub"; app.scope = "system"; app.version = "sample"; app.icon = QIcon(":/explore/" + sample.id + ".png"); backend.installed.append(app);
+        for (const auto &entry : backend.apps) {
+            if (entry.origin == MetadataOrigin::None) continue;
+            App app; app.name = entry.name; app.summary = entry.summary; app.icon = catalogIcon(entry);
+            for (const auto &package : entry.packages) if (package.source == Source::Flatpak) app.id = package.name;
+            app.source = "Flatpak"; app.remote = "flathub"; app.scope = "system"; app.version = "sample"; backend.installed.append(app);
         }
         renderInstalled(); selectPage(1);
         statusBar()->clearMessage();
@@ -215,7 +225,7 @@ public:
         if (state == "failed") { updateStatus->setText("Check failed"); updateList->setPlainText("No installation started. Try checking again.\n\nSample: package service unavailable."); }
     }
     void previewListSelection() {
-        auto *list = pages->currentWidget() == explore ? static_cast<AppList *>(explore->alphabet) : installedList;
+        auto *list = pages->currentWidget() == explore ? explore->results : installedList;
         if (list->count()) { list->setCurrentRow(0); list->setFocus(); }
     }
 
@@ -381,9 +391,8 @@ private:
     AppDetailsPage *appDetails = nullptr;
     struct HistoryEntry {
         QWidget *page = nullptr;
-        DemoApp app{};
-        QIcon icon{};
-        QString platform = "Flatpak";
+        CatalogApp app{};
+        QString platform{};
         int section = 0, scroll = 0;
         QPointer<QWidget> focus{};
     };
@@ -399,8 +408,8 @@ private:
     void showHistory(bool fresh = false) {
         const auto &entry = history[historyIndex];
         if (entry.page == appDetails) {
-            if (fresh || appDetails->currentId != entry.app.id || appDetails->sourceButton->text() != entry.platform)
-                appDetails->showApp(entry.app, entry.icon, entry.platform);
+            if (fresh || appDetails->currentId != entry.app.key || appDetails->sourceButton->text() != entry.platform)
+                appDetails->showApp(entry.app, entry.platform);
             const QString section = entry.section == 1 ? "Installed" : "Explore";
             appDetails->back->setText(section); appDetails->back->setAccessibleName("Back to " + section);
             appDetails->back->setToolTip("Back to " + section + " (Alt+Left)");
@@ -420,8 +429,8 @@ private:
         if (next < 0 || next >= history.size()) return;
         saveHistory(); historyIndex = next; showHistory();
     }
-    void openDetails(const DemoApp &app, const QIcon &icon = {}, const QString &platform = "Flatpak") {
-        pushHistory({appDetails, app, icon, platform, navigation->checkedId()});
+    void openDetails(const CatalogApp &app, const QString &platform = {}) {
+        pushHistory({appDetails, app, platform, navigation->checkedId()});
     }
     bool eventFilter(QObject *object, QEvent *event) override {
         auto *widget = qobject_cast<QWidget *>(object);
@@ -463,7 +472,7 @@ private:
     }
 
     void buildExplore() {
-        explore = new ExplorePage;
+        explore = new ExplorePage(&backend);
         explore->setOperations(&previewOperations);
         explore->setObjectName("explorePrototype");
         filter = explore->source;
@@ -576,9 +585,13 @@ private:
         const int index = item->data(Qt::UserRole).toInt();
         if (index < 0 || index >= displayedInstalled.size()) return;
         const auto app = displayedInstalled[index];
-        for (const auto &sample : explore->apps) if (sample.id == app.id) { explore->openPreview(sample); return; }
-        const DemoApp sample{app.name, app.summary.isEmpty() ? "Description unavailable for this app." : app.summary, "Utilities", app.id};
-        openDetails(sample, appIcon(app), app.source);
+        for (const auto &entry : backend.apps)
+            for (const auto &package : entry.packages)
+                if (package.name == app.id && (package.source == Source::Flatpak) == (app.source == "Flatpak")) { openDetails(entry, app.source == "Flatpak" ? "Flatpak · " + package.repo : QString()); return; }
+        // Installed outside the catalogue: AppImages, local files, removed remotes.
+        CatalogApp local; local.key = "installed:" + app.id; local.name = app.name;
+        local.summary = app.summary.isEmpty() ? "Description unavailable for this app." : app.summary; local.homepage = app.homepage;
+        openDetails(local, app.source);
     }
 
     void renderInstalled() {
@@ -608,6 +621,54 @@ private:
 
 
 };
+
+static long residentMegabytes() {
+    QFile status("/proc/self/status");
+    if (!status.open(QIODevice::ReadOnly)) return -1;
+    for (const QByteArray &line : status.readAll().split('\n'))
+        if (line.startsWith("VmRSS:")) return line.simplified().split(' ').value(1).toLong() / 1024;
+    return -1;
+}
+
+// Loads every source headlessly and prints what the catalogue contains.
+static int catalogStats(QApplication &application) {
+    Backend backend;
+    QElapsedTimer clock;
+    clock.start();
+    QObject::connect(&backend, &Backend::issue, [](const QString &message) { std::fprintf(stderr, "issue: %s\n", qPrintable(message)); });
+    QObject::connect(&backend, &Backend::catalogReady, &application, [&] {
+        int packages[3] = {}, withMetadata = 0, aurDetailed = 0, aurLibraries = 0, overlay = 0, overlayIcons = 0;
+        for (const auto &app : backend.apps) {
+            if (app.origin != MetadataOrigin::None) ++withMetadata;
+            if (app.origin == MetadataOrigin::Overlay) { ++overlay; if (QFileInfo::exists(app.iconPath)) ++overlayIcons; }
+            for (const auto &package : app.packages) ++packages[int(package.source)];
+        }
+        for (const auto &entry : backend.aur) { if (entry.detailed()) ++aurDetailed; if (isLibraryName(entry.name)) ++aurLibraries; }
+        std::printf("Entries:              %lld (with AppStream metadata: %d)\n", qlonglong(backend.apps.size()), withMetadata);
+        std::printf("WoofStore metadata:   %d entries, %d with icons\n", overlay, overlayIcons);
+        std::printf("Flatpak packages:     %d\n", packages[int(Source::Flatpak)]);
+        std::printf("Repo packages:        %d\n", packages[int(Source::Repo)]);
+        std::printf("AUR packages:         %lld indexed, %d with details, %d library-like\n", qlonglong(backend.aur.size()), aurDetailed, aurLibraries);
+        const auto &m = backend.mergeStats;
+        const int merged = m.byId + m.byName + m.byHomepage + m.byOverride;
+        std::printf("Merged:               %d (same ID %d, name rules %d, name+homepage %d, overrides %d)\n", merged, m.byId, m.byName, m.byHomepage, m.byOverride);
+        std::printf("Multi-source entries: %d\n", m.multiSource);
+        std::printf("Name matches merged:  %.1f %% (%d near misses left separate)\n", 100.0 * (m.byName + m.byHomepage + m.byOverride) / qMax(1, m.byName + m.byHomepage + m.byOverride + int(m.nearMisses.size())), int(m.nearMisses.size()));
+        if (qEnvironmentVariableIsSet("WOOFSTORE_SHOW_MERGES")) { for (const auto &line : m.nearMisses) std::printf("  near miss: %s\n", qPrintable(line)); for (const auto &line : m.merges) std::printf("  merged %s\n", qPrintable(line)); }
+        std::printf("Repo metadata:        %s\n", backend.osMetadataMissing ? "missing (install archlinux-appstream-data)" : "loaded");
+        std::printf("Load time:            %lld ms\n", qlonglong(clock.elapsed()));
+        std::printf("Memory (VmRSS):       %ld MB\n", residentMegabytes());
+        application.quit();
+    });
+    backend.load();
+    return application.exec();
+}
+
+// The fixture catalogue entry with this name (tests/fixtures/catalog.json).
+static const CatalogApp &fixtureApp(const Backend &backend, const QString &name) {
+    for (const auto &app : backend.apps) if (app.name == name) return app;
+    qFatal("Fixture app %s is missing", qPrintable(name));
+}
 
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
@@ -646,6 +707,7 @@ int main(int argc, char **argv) {
     parser.addOption({"mosaic-hover", "Preview a floating mosaic app card.", "app-id"});
     parser.addOption({"explore-collection", "Preview the discovery collection."});
     parser.addOption({"explore-filters", "Show the expanded Explore filters."});
+    parser.addOption({"search", "Type this search in a live-catalog preview.", "text"});
     parser.addOption({"details-app", "Preview an app detail page.", "app-id"});
     parser.addOption({"details-gallery", "Preview the screenshot carousel."});
     parser.addOption({"details-slide", "Preview an app screenshot index.", "index", "0"});
@@ -655,14 +717,17 @@ int main(int argc, char **argv) {
     parser.addOption({"sidebar-check", "Check sidebar controls without loading software or changing user settings."});
     parser.addOption({"terminal-demo", "Run a harmless prompt test in the embedded terminal."});
     parser.addOption({"terminal-check", "Automatically test the embedded terminal without system changes."});
+    parser.addOption({"live-catalog", "Use the live software sources in a screenshot preview instead of the test catalogue."});
+    parser.addOption({"catalog-stats", "Load every software source, print catalogue counts and memory use, then exit."});
     parser.process(application);
+    if (parser.isSet("catalog-stats")) return catalogStats(application);
     QPalette p = application.palette();
     for (const auto group : {QPalette::Active, QPalette::Inactive})
         p.setColor(group, QPalette::PlaceholderText, p.color(group, QPalette::Text));
     application.setPalette(p);
     QTemporaryDir sidebarCheckConfig;
     if (parser.isSet("prototype-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check")) qputenv("XDG_CONFIG_HOME", sidebarCheckConfig.path().toUtf8());
-    Store store(!parser.isSet("screenshot") && !parser.isSet("prototype-check") && !parser.isSet("activity-preview") && !parser.isSet("updates-preview") && !parser.isSet("installed-preview") && !parser.isSet("terminal-check") && !parser.isSet("sidebar-check") && !parser.isSet("explore-check"));
+    Store store(parser.isSet("live-catalog") || (!parser.isSet("screenshot") && !parser.isSet("prototype-check") && !parser.isSet("activity-preview") && !parser.isSet("updates-preview") && !parser.isSet("installed-preview") && !parser.isSet("terminal-check") && !parser.isSet("sidebar-check") && !parser.isSet("explore-check")));
     store.show();
     if (parser.isSet("prototype-check")) {
         store.previewInstalled();
@@ -670,7 +735,7 @@ int main(int argc, char **argv) {
         auto *details = static_cast<AppDetailsPage *>(store.findChild<QWidget *>("appDetailsPage"));
         auto *installed = store.findChild<QListWidget *>("installedApps");
         installed->itemClicked(installed->item(0));
-        bool passed = details->currentId == page->apps[1].id && details->isVisible()
+        bool passed = details->currentId == fixtureApp(store.backend, "Firefox").key && details->isVisible()
             && store.findChild<QButtonGroup *>("pageNavigation")->checkedId() == 1 && details->back->text() == "Installed";
         details->back->click(); store.selectPage(1);
         QTemporaryDir droppedFiles;
@@ -696,8 +761,8 @@ int main(int argc, char **argv) {
         QApplication::sendEvent(dropPage->viewport(), &enter);
         QDropEvent drop(QPointF(40, 40), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(dropPage->viewport(), &drop);
-        passed &= drop.isAccepted() && installed->count() == 8 && !overlay->isVisible();
-        store.previewFiles(mime.urls()); passed &= installed->count() == 8;
+        passed &= drop.isAccepted() && installed->count() == 5 && !overlay->isVisible();
+        store.previewFiles(mime.urls()); passed &= installed->count() == 5;
         QMimeData remote; remote.setUrls({QUrl("https://example.invalid/app.flatpak")});
         QDragEnterEvent rejected(QPoint(40, 40), Qt::CopyAction, &remote, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(dropPage->viewport(), &rejected); passed &= !rejected.isAccepted() && !overlay->isVisible();
@@ -705,8 +770,8 @@ int main(int argc, char **argv) {
         installed->itemClicked(installed->item(installed->count() - 1));
         passed &= details->isVisible() && details->sourceButton->text() == "AppImage";
         details->back->click();
-        store.backend.installedChanged(); passed &= installed->count() == 8;
-        page->loadMore->click(); passed &= !page->loadMore->isEnabled() && page->loadMore->text() == "All apps loaded";
+        store.backend.installedChanged(); passed &= installed->count() == 5;
+        passed &= page->loadMore->isHidden();  // The fixture fits in one page
         store.findChild<QPushButton *>("updateAll")->click();
         auto *auth = store.findChild<QDialog *>("updateAuthorization");
         auto *password = auth->findChild<QLineEdit *>("previewPassword");
@@ -720,7 +785,9 @@ int main(int argc, char **argv) {
         accept = auth->findChild<QPushButton *>("acceptPreviewUpdates");
         password->setText("sample"); passed &= accept->isEnabled(); accept->click();
         passed &= password->text().isEmpty() && !store.findChild<QPushButton *>("updateAll")->isEnabled();
-        page->openPreview(page->apps[14]);
+        CatalogApp longApp; longApp.key = "test-long-description"; longApp.name = "Long description"; longApp.origin = MetadataOrigin::AppStream;
+        for (int line = 1; line <= 12; ++line) longApp.description += QString("<p>Paragraph %1 of the publisher description.</p>").arg(line);
+        page->openPreview(longApp);
         auto *description = details->findChild<QLabel *>("detailsDescription");
         auto *descriptionToggle = details->findChild<QToolButton *>("descriptionToggle");
         const int collapsedDescriptionHeight = description->height();
@@ -732,19 +799,21 @@ int main(int argc, char **argv) {
         passed &= description->height() > collapsedDescriptionHeight && descriptionToggle->text() == "Show less"
             && description->text() == publisherCopy;
         descriptionToggle->click(); details->findChild<QVariantAnimation *>("descriptionMotion")->setCurrentTime(details->findChild<QVariantAnimation *>("descriptionMotion")->duration()); passed &= description->height() == collapsedDescriptionHeight;
-        page->openPreview({"Short description", "One short line.", "Utilities", "test-short-description"});
+        CatalogApp shortApp; shortApp.key = "test-short-description"; shortApp.name = "Short description"; shortApp.summary = "One short line.";
+        page->openPreview(shortApp);
         passed &= descriptionToggle->isHidden() && description->text() == "One short line.";
         for (const QString &name : {QString("changelogPanel"), QString("addonPanel"), QString("permissionPanel"), QString("linksPanel")})
             passed &= details->findChild<QWidget *>(name)->isHidden();
         passed &= details->screenshot->isHidden();
-        page->openPreview(page->apps[0]); details->install->click();
+        page->openPreview(fixtureApp(store.backend, "Krita")); details->install->click();
+        // Permissions come only from an installed Flatpak manifest; the fixture installs nothing.
         passed &= details->findChild<QWidget *>("addonPanel")->isHidden()
-            && !details->findChild<QWidget *>("permissionPanel")->isHidden()
+            && details->findChild<QWidget *>("permissionPanel")->isHidden()
             && !details->findChild<QWidget *>("linksPanel")->isHidden();
         passed &= !details->install->isEnabled() && details->install->text() == "Installing…";
-        passed &= details->sourceButton->menu()->actions().size() >= 2;
-        for (auto *action : details->sourceButton->menu()->actions()) if (action->text() == "AUR") action->trigger();
-        passed &= details->sourceButton->text() == "AUR";
+        passed &= details->sourceButton->menu()->actions().size() == 3 && details->sourceButton->text() == "Repo · extra";
+        for (auto *action : details->sourceButton->menu()->actions()) if (action->data() == "AUR · krita-git") action->trigger();
+        passed &= details->sourceButton->text() == "AUR · krita-git";
         auto *activity = static_cast<ActivityButton *>(store.findChild<QAbstractButton *>("activityButton"));
         activity->click(); passed &= store.findChild<QDialog *>("activityPopup")->isVisible();
         // Closing the popup leaves the simulated task running.
@@ -784,7 +853,7 @@ int main(int argc, char **argv) {
         passed &= details->check() && !details->isHidden() && !details->back->hasFocus();
         details->back->click();
         passed &= !page->isHidden();
-        page->openPreview(page->apps[5]);
+        page->openPreview(fixtureApp(store.backend, "GIMP"));
         passed &= !details->findChild<QWidget *>("scorePanel") && details->findChild<QLabel *>("releaseNotes")->text().contains("GIMP")
             && !details->findChild<QLabel *>("releaseVersion")->isHidden();
         auto *addonPanel = details->findChild<QWidget *>("addonPanel");
@@ -792,19 +861,19 @@ int main(int argc, char **argv) {
         auto *linksPanel = details->findChild<QWidget *>("linksPanel");
         QApplication::processEvents();
         passed &= details->findChild<QWidget *>("changelogPanel")->y() < addonPanel->y()
-            && addonPanel->y() < permissionPanel->y() && permissionPanel->y() < linksPanel->y()
+            && addonPanel->y() < linksPanel->y() && permissionPanel->isHidden()
             && !linksPanel->findChildren<QCommandLinkButton *>("appLink").isEmpty();
         auto *addonInstall = addonPanel->findChild<QPushButton *>("installAddon");
         auto *addonOpen = addonPanel->findChild<QCommandLinkButton *>("openAddon");
         passed &= addonInstall && addonOpen;
         if (addonInstall && addonOpen) {
-            addonInstall->click(); passed &= addonInstall->text() == "Installing…" && details->currentId == page->apps[5].id;
+            addonInstall->click(); passed &= addonInstall->text() == "Installing…" && details->currentId == fixtureApp(store.backend, "GIMP").key;
             const QString addonName = addonOpen->text(); addonOpen->click();
-            passed &= details->title->text() == addonName && details->currentId != page->apps[5].id && details->check();
-            details->back->click(); passed &= details->currentId == page->apps[5].id;
+            passed &= details->title->text() == addonName && details->currentId != fixtureApp(store.backend, "GIMP").key && details->check();
+            details->back->click(); passed &= details->currentId == fixtureApp(store.backend, "GIMP").key;
         }
         details->back->click();
-        page->openPreview(page->apps[14]);
+        page->openPreview(fixtureApp(store.backend, "Firefox"));
         passed &= details->findChild<QWidget *>("changelogPanel")->isHidden()
             && !details->back->autoRaise() && !details->findChild<QToolButton *>("descriptionToggle")->autoRaise();
         for (auto *label : details->findChildren<QLabel *>()) passed &= !label->text().contains("Preview");
@@ -884,12 +953,12 @@ int main(int argc, char **argv) {
         wheelFeatured(featured, QPoint(), QPoint(-30, 0));
         passed &= featured->currentIndex() == (beforeWheel + 1) % featured->count()
             && page->verticalScrollBar()->value() == sourceScroll;
-        page->search->setText("firefox"); QApplication::processEvents(); passed &= !autoplay->isActive();
-        page->search->clear(); QApplication::processEvents(); passed &= autoplay->isActive();
+        page->search->setText("firefox"); page->applyFilters(); QApplication::processEvents(); passed &= !autoplay->isActive();
+        page->search->clear(); page->applyFilters(); QApplication::processEvents(); passed &= autoplay->isActive();
         page->showDirectory(); QApplication::processEvents(); passed &= !autoplay->isActive();
         page->verticalScrollBar()->setValue(0); QApplication::processEvents(); passed &= autoplay->isActive();
-        auto *tile = page->masonry->tiles[9]; page->ensureWidgetVisible(tile); QApplication::processEvents();
-        QList<QRect> mosaicGeometry; for (auto *card : page->masonry->tiles) mosaicGeometry.append(card->geometry());
+        auto *tile = page->sections.first().masonry->tiles[0];  // GIMP: the featured install above already finished Krita page->ensureWidgetVisible(tile); QApplication::processEvents();
+        QList<QRect> mosaicGeometry; for (auto *card : page->sectionTiles()) mosaicGeometry.append(card->geometry());
         QApplication::sendEvent(tile, &hover);
         auto *hoverDelay = page->findChild<QTimer *>("mosaicHoverDelay");
         passed &= hoverDelay->isActive(); QMetaObject::invokeMethod(hoverDelay, "timeout", Qt::DirectConnection);
@@ -901,10 +970,11 @@ int main(int argc, char **argv) {
         preview->quickInstall->click();
         passed &= preview->quickInstall->text() == "Installing…" && page->isVisible() && details->isHidden()
             && preview->rect().contains(preview->quickInstall->geometry());
-        passed &= preview->geometry().contains(sourceRect.center()) && preview->width() > tile->width() && preview->height() > tile->height();
-        passed &= preview->isVisible() && preview->app.id == tile->app.id && !preview->artwork.isNull()
+        passed &= preview->geometry().contains(sourceRect.center()) && preview->width() >= qMin(tile->width() + 48, page->viewport()->width() - 24)
+            && preview->height() >= qMin(tile->height() + 24, page->viewport()->height() - 24);
+        passed &= preview->isVisible() && preview->app.key == tile->app.key && !preview->artwork.isNull()
             && page->viewport()->rect().contains(preview->geometry());
-        for (int i = 0; i < mosaicGeometry.size(); ++i) passed &= mosaicGeometry[i] == page->masonry->tiles[i]->geometry();
+        for (int i = 0; i < mosaicGeometry.size(); ++i) passed &= mosaicGeometry[i] == page->sectionTiles()[i]->geometry();
         auto *dismiss = page->findChild<QTimer *>("mosaicDismissDelay");
         auto *fade = page->findChild<QVariantAnimation *>("mosaicHoverFade");
         auto *opacity = qobject_cast<QGraphicsOpacityEffect *>(preview->graphicsEffect());
@@ -919,21 +989,21 @@ int main(int argc, char **argv) {
         QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier); QApplication::sendEvent(tile, &escape);
         passed &= preview->isHidden();
         QApplication::sendEvent(tile, &hover); QMetaObject::invokeMethod(hoverDelay, "timeout", Qt::DirectConnection);
-        preview->click(); passed &= details->currentId == tile->app.id && !details->isHidden(); details->back->click();
+        preview->click(); passed &= details->currentId == tile->app.key && !details->isHidden(); details->back->click();
         page->verticalScrollBar()->setValue(0); QApplication::processEvents();
-        for (const auto &app : page->apps) {
+        for (const auto &app : store.backend.apps) {
             page->openPreview(app); QApplication::processEvents();
-            passed &= details->check() && details->currentId == app.id && !details->isHidden();
+            passed &= details->check() && details->currentId == app.key && !details->isHidden();
             details->back->click(); passed &= !page->isHidden();
         }
-        page->search->setText("firefox");
+        page->search->setText("firefox"); page->applyFilters();
         const int previousScroll = page->verticalScrollBar()->value();
-        page->openPreview(page->apps[3]);
+        page->openPreview(fixtureApp(store.backend, "Firefox"));
         details->back->click();
-        passed &= page->search->text() == "firefox" && page->alphabet->count() == 1
+        passed &= page->search->text() == "firefox" && page->results->count() == 1
             && page->verticalScrollBar()->value() == previousScroll;
-        page->search->clear();
-        page->openPreview(page->apps[0]); QApplication::processEvents();
+        page->search->clear(); page->applyFilters();
+        page->openPreview(fixtureApp(store.backend, "Krita")); QApplication::processEvents();
         auto *gallery = details->screenshot;
         passed &= gallery->images.size() >= 3;
         QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
@@ -992,44 +1062,39 @@ int main(int argc, char **argv) {
                     passed &= page->isHidden() && nav->checkedId() == destination;
                     store.backend.catalogueChanged(); store.backend.installedChanged(); settle();
                     clickNavigation(0);
-                    passed &= page->isVisible() && nav->checkedId() == 0 && page->alphabet->count() == page->apps.size()
-                        && page->masonry->height() > 1 && page->search->isVisible();
-                    const auto tiles = page->masonry->tiles;
-                    QRegion uncovered(page->masonry->rect());
-                    int spotlights = 0;
-                    for (int i = 0; i < tiles.size(); ++i) {
-                        if (tiles[i]->isHidden()) continue;
-                        uncovered -= tiles[i]->geometry().adjusted(0, 0, 12, 12);
-                        if (tiles[i]->spotlight) {
-                            ++spotlights;
-                            passed &= !tiles[i]->artwork.isNull() && i >= page->carousel->count();
+                    passed &= page->isVisible() && nav->checkedId() == 0 && page->results->count() == 3
+                        && page->sections.first().masonry->height() > 1 && page->search->isVisible();
+                    for (const auto &section : page->sections) {
+                        const auto tiles = section.masonry->tiles;
+                        QRegion uncovered(section.masonry->rect());
+                        for (int i = 0; i < tiles.size(); ++i) {
+                            uncovered -= tiles[i]->geometry().adjusted(0, 0, 12, 12);
+                            if (tiles[i]->spotlight) passed &= !tiles[i]->artwork.isNull() && tiles.size() >= 3;
+                            passed &= section.masonry->rect().contains(tiles[i]->geometry())
+                                && tiles[i]->height() >= tiles[i]->heightForWidth(tiles[i]->width());
+                            for (int j = i + 1; j < tiles.size(); ++j) passed &= !tiles[i]->geometry().intersects(tiles[j]->geometry());
                         }
-                        passed &= page->masonry->rect().contains(tiles[i]->geometry())
-                            && tiles[i]->height() >= tiles[i]->heightForWidth(tiles[i]->width());
-                        for (int j = i + 1; j < tiles.size(); ++j)
-                            if (!tiles[j]->isHidden()) passed &= !tiles[i]->geometry().intersects(tiles[j]->geometry());
                     }
-                    passed &= uncovered.isEmpty() && spotlights >= 2;
-                    for (int i = 0; i < page->alphabet->count(); ++i) {
-                        auto *row = page->alphabet->itemWidget(page->alphabet->item(i));
+                    for (int i = 0; i < page->results->count(); ++i) {
+                        auto *row = page->results->itemWidget(page->results->item(i));
                         auto *action = row->findChild<QPushButton *>("quickInstall");
-                        passed &= row->width() <= page->alphabet->viewport()->width()
+                        passed &= row->width() <= page->results->viewport()->width()
                             && action->geometry().right() < row->width() - 7;
                     }
                 }
             }
         }
-        page->openPreview(page->apps[0]);
+        page->openPreview(fixtureApp(store.backend, "Krita"));
         nav->button(0)->click(); settle();
         passed &= page->isVisible();
-        page->openPreview(page->apps[0]);
+        page->openPreview(fixtureApp(store.backend, "Krita"));
         store.selectPage(0); settle();
         passed &= page->isVisible();
         store.previewInstalled(); settle();
         auto *installed = static_cast<AppList *>(store.findChild<QListWidget *>("installedApps"));
         auto *search = store.findChild<QLineEdit *>("installedSearch");
         auto *source = store.findChild<QComboBox *>("installedFilter");
-        passed &= installed->count() == 6 && installed->item(0)->text().startsWith("Blender\n");
+        passed &= installed->count() == 3 && installed->item(0)->text().startsWith("Firefox\n");
         for (int i = 1; i < installed->count(); ++i)
             passed &= QString::compare(installed->item(i - 1)->text(), installed->item(i)->text(), Qt::CaseInsensitive) <= 0;
         source->setCurrentText("AppImage"); passed &= installed->count() == 0 && installed->isHidden();
@@ -1045,20 +1110,21 @@ int main(int argc, char **argv) {
         };
         store.selectPage(0); settle(); page->showCollection(); settle();
         const int exploreScroll = page->verticalScrollBar()->value();
-        page->openPreview(page->apps[5]); mouseHistory(Qt::BackButton);
+        page->openPreview(fixtureApp(store.backend, "GIMP")); mouseHistory(Qt::BackButton);
         passed &= page->isVisible() && page->verticalScrollBar()->value() == exploreScroll && nav->checkedId() == 0;
         mouseHistory(Qt::ForwardButton);
-        passed &= details->isVisible() && details->currentId == page->apps[5].id && !details->back->hasFocus();
-        mouseHistory(Qt::BackButton); page->openPreview(page->apps[3]); mouseHistory(Qt::ForwardButton);
-        passed &= details->currentId == page->apps[3].id;
+        passed &= details->isVisible() && details->currentId == fixtureApp(store.backend, "GIMP").key && !details->back->hasFocus();
+        mouseHistory(Qt::BackButton); page->openPreview(fixtureApp(store.backend, "Firefox")); mouseHistory(Qt::ForwardButton);
+        passed &= details->currentId == fixtureApp(store.backend, "Firefox").key;
         mouseHistory(Qt::BackButton); store.selectPage(1); settle();
         const auto inventory = store.backend.installed;
-        store.backend.installed.append(inventory); store.backend.installed.append(inventory); store.backend.installedChanged(); settle();
+        for (int copy = 0; copy < 4; ++copy) store.backend.installed.append(inventory);
+        store.backend.installedChanged(); settle();
         auto *installedPage = store.findChild<QScrollArea *>("installedDropPage");
         installedPage->verticalScrollBar()->setValue(qMin(180, installedPage->verticalScrollBar()->maximum()));
         const int installedScroll = installedPage->verticalScrollBar()->value();
-        const QString installedId = store.backend.installed[installed->item(9)->data(Qt::UserRole).toInt()].id;
-        installed->itemClicked(installed->item(9));
+        const QString installedId = store.backend.installed[installed->item(12)->data(Qt::UserRole).toInt()].id.toLower();
+        installed->itemClicked(installed->item(12));
         passed &= details->back->text() == "Installed" && nav->checkedId() == 1;
         mouseHistory(Qt::BackButton);
         passed &= installedPage->isVisible() && installedScroll > 0 && installedPage->verticalScrollBar()->value() == installedScroll && nav->checkedId() == 1;
@@ -1078,7 +1144,7 @@ int main(int argc, char **argv) {
     if (parser.isSet("compact")) store.resize(760, 800);
     if (parser.isSet("details-app")) {
         auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
-        for (const auto &app : explore->apps) if (app.id == parser.value("details-app")) explore->openPreview(app);
+        for (const auto &app : store.backend.apps) if (app.key == parser.value("details-app").toLower()) explore->openPreview(app);
     }
     if (parser.isSet("collapsed")) store.findChild<QAction *>("compactSidebar")->setChecked(true);
     if (parser.isSet("expanded")) store.findChild<QAction *>("compactSidebar")->setChecked(false);
@@ -1126,7 +1192,7 @@ int main(int argc, char **argv) {
     }
     if (parser.isSet("authorization-preview")) { store.selectPage(2); store.showUpdateAuthorization(); }
     if (parser.isSet("install-preview")) {
-        if (parser.isSet("explore-bottom")) store.findChild<QListWidget *>("alphabeticalApps")->findChild<QPushButton *>("quickInstall")->click();
+        if (parser.isSet("explore-bottom")) store.findChild<QListWidget *>("exploreResults")->findChild<QPushButton *>("quickInstall")->click();
         else store.findChild<QPushButton *>("previewInstall")->click();
     }
     if (parser.isSet("activity-preview") || parser.isSet("activity-sidebar")) store.previewActivity();
@@ -1171,20 +1237,37 @@ int main(int argc, char **argv) {
         };
         QObject::connect(timeout, &QTimer::timeout, &store, [&application, savePreview] { application.exit(savePreview() ? 0 : 1); });
         timeout->start(15000);
-        if (parser.value("page") == "explore" || parser.isSet("installed-preview") || parser.isSet("updates-preview")) {
+        if (parser.isSet("live-catalog")) {
+            // Live sources: wait for the catalogue, then give screenshots time to download.
+            timeout->start(60000);
+            QObject::connect(&store.backend, &Backend::catalogReady, &store, [&store, &parser, capture] {
+                if (parser.isSet("details-app")) {
+                    auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
+                    for (const auto &app : store.backend.apps) if (app.key == parser.value("details-app").toLower()) { explore->openPreview(app); break; }
+                }
+                if (parser.isSet("explore-filters")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->filters->setChecked(true);
+                QTimer::singleShot(4000, &store, [&store, &parser] {
+                    auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
+                    if (!parser.value("search").isEmpty()) { explore->search->setText(parser.value("search")); explore->applyFilters(); }
+                    if (parser.isSet("explore-collection")) explore->showCollection();
+                    if (parser.isSet("explore-bottom")) explore->showDirectory();
+                });
+                QTimer::singleShot(5000, &store, capture);
+            });
+        } else if (parser.value("page") == "explore" || parser.isSet("installed-preview") || parser.isSet("updates-preview")) {
             QTimer::singleShot(500, &store, [&store, &parser] {
                 auto *details = static_cast<AppDetailsPage *>(store.findChild<QWidget *>("appDetailsPage"));
                 if (parser.isSet("details-gallery")) details->showGallery();
                 if (parser.isSet("details-slide")) details->screenshot->select(parser.value("details-slide").toInt(), false);
                 if (parser.isSet("details-changelog")) details->showChangelog();
-                if (parser.isSet("details-bottom")) static_cast<AppDetailsPage *>(store.findChild<QWidget *>("appDetailsPage"))->showPermissions();
+                if (parser.isSet("details-bottom")) static_cast<AppDetailsPage *>(store.findChild<QWidget *>("appDetailsPage"))->scrollToPermissions();
                 if (parser.isSet("mosaic-hover")) {
                     auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
-                    for (auto *tile : explore->masonry->tiles) if (tile->app.id == parser.value("mosaic-hover")) {
+                    for (auto *tile : explore->sectionTiles()) if (tile->app.key == parser.value("mosaic-hover").toLower()) {
                         explore->ensureWidgetVisible(tile); QEnterEvent enter(QPointF(10, 10), QPointF(10, 10), QPointF(10, 10)); QApplication::sendEvent(tile, &enter); break;
                     }
                 }
-                if (parser.isSet("mosaic-end")) { auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype")); explore->ensureWidgetVisible(explore->masonry->tiles.last()); }
+                if (parser.isSet("mosaic-end")) { auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype")); explore->ensureWidgetVisible(explore->sectionTiles().last()); }
                 if (parser.isSet("explore-collection")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->showCollection();
                 if (parser.isSet("explore-bottom")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->showDirectory();
                 if (parser.isSet("explore-end")) {
@@ -1195,10 +1278,10 @@ int main(int argc, char **argv) {
             });
             QTimer::singleShot(parser.isSet("mosaic-hover") ? 1150 : 800, &store, capture);
         }
-        QObject::connect(&store.backend, &Backend::catalogueChanged, &store, [&store, capture] {
+        if (!parser.isSet("live-catalog")) QObject::connect(&store.backend, &Backend::catalogueChanged, &store, [&store, capture] {
             if (!store.backend.catalogue.isEmpty() && !store.backend.installed.isEmpty() && !store.backend.catalogue.first().remote.isEmpty()) QTimer::singleShot(700, &store, capture);
         });
-        QObject::connect(&store.backend, &Backend::installedChanged, &store, [&store, capture] {
+        if (!parser.isSet("live-catalog")) QObject::connect(&store.backend, &Backend::installedChanged, &store, [&store, capture] {
             if (!store.backend.catalogue.isEmpty() && !store.backend.installed.isEmpty() && !store.backend.catalogue.first().remote.isEmpty()) QTimer::singleShot(700, &store, capture);
         });
     }

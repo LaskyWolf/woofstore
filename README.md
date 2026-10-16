@@ -7,7 +7,7 @@ A native Qt 6 / KDE store for CachyOS with a persistent sidebar and Quickpeek-st
 Install the dependencies:
 
 ```bash
-sudo pacman -S --needed base-devel cmake qt6-base qt6-svg kcoreaddons kparts konsole breeze-icons appstream-qt flatpak git cachy-update
+sudo pacman -S --needed base-devel cmake qt6-base qt6-svg kcoreaddons kparts konsole breeze-icons appstream-qt archlinux-appstream-data expac flatpak git cachy-update
 ```
 
 Build from this directory:
@@ -30,11 +30,20 @@ flatpak update --user --appstream
 
 Restart the store after refreshing the catalogue.
 
+### Catalogue data
+
+- Repository apps get names, icons, and screenshots from `archlinux-appstream-data`. Without it, Explore shows the install command.
+- The AUR package list downloads once a day (about 10 MB) into `~/.cache/WoofStore/WoofStore/`.
+- Popularity rankings from Flathub and pkgstats refresh daily. Offline, Explore uses the last saved copy.
+- Screenshots download on first view and stay in the same cache folder (at most 200 MB).
+- To add descriptions or icons for CachyOS and AUR apps, or to fix a wrong merge, see [metadata/README.md](metadata/README.md).
+- `./build/woof-store --catalog-stats` prints source counts, merge results, load time, and memory use.
+
 ## Usage
 
 Use the top-left button to collapse or expand the sidebar. Compact mode keeps tooltips and keyboard navigation. The sidebar size is remembered. Settings is currently omitted; source filters remain on Explore.
 
-- **Explore:** an offline visual prototype with 18 sample Flathub apps. Search, category/source/sort filters, three spring-animated featured slides with playful bar indicators and KDE animation-speed support; they rotate every five seconds and pause on hover, keyboard focus, or when offscreen, whole-card detail pages, a gap-free mosaic with larger publisher-screenshot cards for apps outside the featured carousel, and a compact rounded A–Z list are interactive. It uses bundled app icons and existing publisher screenshots. It does not search live catalogues or install apps. AUR is not connected; selecting it shows an explicit empty state. Load more is a preview control; all bundled apps are already visible.
+- **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and Trending on Flathub, Popular in Arch, and Popular on AUR. Install is still simulated.
 - **Installed:** list Flatpaks, foreign Arch packages, and AppImages imported by this store. Foreign packages are labeled **AUR / local** because `pacman -Qm` does not prove AUR origin. Official repository packages are updated by Cachy-Update but are not listed here in this version.
 - **Updates:** check available updates and preview update acceptance. Update all and Review updates open a sample-password popup and simulate progress. These actions do not authorize or start real updates.
 - **Activity:** inspect simulated progress and history in a popup. The embedded-terminal demo also supports ordinary and hidden input. No package operation is started by the current file or update preview controls.
@@ -73,40 +82,38 @@ cmake --install build --prefix "$HOME/.local"
 
 The desktop launcher calls `woof-store`; ensure `$HOME/.local/bin` is on your desktop session's PATH.
 
-App cards open an offline detail page inspired by Flathub: icon, publisher description collapsed to six lines with Show more / Show less, screenshot carousel, latest changelog, and permission panel. Release notes come from the bundled Flathub AppStream snapshot; missing notes are stated explicitly. Permission rows are cached installed-package snapshots and are not a security verdict. Use Back or Alt+Left to return to Explore.
+App cards open a detail page inspired by Flathub: icon, publisher description collapsed to six lines with Show more / Show less, screenshot carousel, latest release notes, add-ons, links, and a source menu with every package of the app. Permissions appear only for installed Flatpaks and come from `flatpak info -M`; they are not a security verdict. Use Back or Alt+Left to return to Explore.
 
-Check the preview description language selector with `python tools/refresh-descriptions.py --check`. Refresh descriptions with `python tools/refresh-descriptions.py /path/to/appstream.xml.gz assets/details.json`, then rebuild to bundle them.
+Browse app screenshots with the bar indicators, Left/Right keys, or deliberate dragging. Wheel and trackpad input scroll the page without switching images. Neighboring flat screenshots remain visible while the current image animates into place. Only publisher screenshots are shown.
 
-Browse app screenshots with the bar indicators, Left/Right keys, or deliberate dragging. Wheel and trackpad input scroll the page without switching images. Neighboring flat screenshots remain visible while the current image animates into place. Only publisher screenshots are bundled.
-
-Installed uses the same compact A–Z list as Explore. `--installed-preview` shows sample data and opens only offline app details. Installed row clicks open the main Explore detail view. Remove and Reinstall buttons simulate actions without changing packages.
+Installed uses the same compact list as Explore. `--installed-preview` shows sample data and opens only offline app details. Installed row clicks open the main Explore detail view. Remove and Reinstall buttons simulate actions without changing packages.
 
 Updates fills the page with available updates. Its bottom action panel contains Update all, Check for updates, and Review updates. Update all and Review updates open the sample-password preview; no real update command runs. `--updates-preview idle`, `checking`, or `failed` captures labeled sample states without starting a check. `--list-selected` previews selection padding. UI checks use sample inventory rather than querying installed packages.
 
-App details and the Explore A–Z list have simulated Install buttons. Clicking changes Install to Installing… and then Open; Open does not launch an app. Source choices (Flatpak and AUR) demonstrate the menu only. Progress is shared across buttons for the same app during this session.
+App details and the Explore list have simulated Install buttons. Clicking changes Install to Installing… and then Open; Open does not launch an app. The source menu lists real packages; choosing one does not install anything yet. Progress is shared across buttons for the same app during this session.
 
 The bottom sidebar Activity control opens a modeless popup with activity history and embedded terminal prompts. Collapsing the sidebar keeps an activity icon and progress arc; expanding it adds a progress line. Preview tasks show percentages. Real package-manager progress is indeterminate. Closing this popup does not stop the operation.
 
-Use `--prototype-check` to test simulated install, source selection, remove, reinstall, and activity popup behavior without package operations. Use `--activity-preview` for a sample popup, `--activity-sidebar` for sidebar progress, or `--details-app org.kde.krita --install-preview` to preview the installing state. Screenshot previews do not load live inventory.
+Use `--prototype-check` to test simulated install, source selection, remove, reinstall, and activity popup behavior without package operations. Use `--activity-preview` for a sample popup, `--activity-sidebar` for sidebar progress, or `--details-app org.kde.krita --install-preview` to preview the installing state. Checks and screenshot previews use the small test catalogue in `tests/fixtures/`. Add `--live-catalog` to a screenshot preview to use the live sources, and `--search <text>` to type a search in it.
 
 The expanded sidebar shows a divider and uses an Activity progress line with a plain icon. Compact mode removes the divider and keeps the activity progress arc. The source control has a separate drop-down arrow.
 
-Capture the update popup with `--updates-preview idle --authorization-preview --screenshot /tmp/authorization.png`. `--file-preview /path/to/file.AppImage` previews a selected local file without changes; `--installed-open` opens its main detail page when combined with that flag. `--explore-end` captures Load more below the A–Z list.
+Capture the update popup with `--updates-preview idle --authorization-preview --screenshot /tmp/authorization.png`. `--file-preview /path/to/file.AppImage` previews a selected local file without changes; `--installed-open` opens its main detail page when combined with that flag. `--explore-end` captures Load more below the directory.
 
-Filter, sidebar, and description toggles animate smoothly using KDE’s animation speed. Hover or keyboard-focus a mosaic card to expand it into a publisher-image preview above the existing mosaic; click it to open details. The preview leaves the mosaic geometry unchanged. Capture it with `--mosaic-hover org.gnome.Builder --screenshot /tmp/hover.png`.
+Filter, sidebar, and description toggles animate smoothly using KDE’s animation speed. Hover or keyboard-focus a mosaic card to expand it into a publisher-image preview above the existing mosaic; click it to open details. The preview leaves the mosaic geometry unchanged. Capture it with `--mosaic-hover org.gimp.gimp --screenshot /tmp/hover.png`.
 
 Expanded hover cards dissolve when the pointer leaves; returning during the fade keeps them open. Escape or scrolling closes them immediately.
 
 Featured and expanded hover cards offer quick Install buttons. They share the simulated Install → Installing… → Open flow with app details and list rows; no software is downloaded or installed.
 
-Back and Show more/less use native button shapes. Pages omit Preview badges and metadata footers. Refreshing descriptions also refreshes the newest cached stable release’s notes, version, and date.
+Back and Show more/less use native button shapes. Pages omit Preview badges and metadata footers.
 
 Mouse Back and Forward navigate page history. App details opened from Installed return to Installed; Explore details return to the previous Explore position. Forward reopens the app, and opening another page after Back replaces the forward path.
 
 Drag supported local files over Installed to see a full content drop overlay with their formats and filenames. Dropping uses simulated installation. Activity → Clear removes completed history without resetting app installation state.
 
-App details include Changelog, Add-ons, Permissions, and Links in that order. Click an add-on row to read its details; Install starts its simulated installation directly. Publisher links open in the default browser.
+App details include Changelog, Add-ons, Permissions, and Links in that order. Click an add-on row to read its details; Install starts its simulated installation directly. Publisher links open in the default browser. Flathub's packaging disclaimers are left out of descriptions.
 
-Explore starts with filters collapsed and the compact featured carousel. Nine Flathub categories combine Education and Science; category matches use the bundled publisher metadata.
+Explore starts with filters collapsed and the compact featured carousel. Nine categories combine Education and Science; each app joins one group from its AppStream categories.
 
 Use the wheel over Explore’s featured card, Install button, or indicators to switch slides. Mouse clicks do not keep autoplay paused after the pointer leaves; rotation resumes on a fresh five-second countdown.

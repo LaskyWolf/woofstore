@@ -93,7 +93,9 @@ protected:
 class AppDetailsPage : public QScrollArea {
 public:
     std::function<void()> onBack;
-    std::function<void(const DemoApp &)> onOpenAddon;
+    std::function<void(const CatalogApp &)> onOpenAddon;
+    Backend *backend = nullptr;
+    CatalogApp current;
     QToolButton *back = nullptr;
     QLabel *title = nullptr;
     AppScreenshot *screenshot = nullptr;
@@ -115,11 +117,7 @@ public:
         sourceButton->setPopupMode(QToolButton::MenuButtonPopup); sourceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         connect(sourceButton, &QToolButton::clicked, sourceButton, &QToolButton::showMenu);
         sourceButton->setIcon(QIcon::fromTheme("package-x-generic")); sourceButton->setAccessibleName("Choose source");
-        auto *sources = new QMenu(sourceButton); auto *sourceGroup = new QActionGroup(sources); sourceGroup->setExclusive(true);
-        for (const QString &source : {QString("Flatpak"), QString("AUR")}) {
-            auto *action = sources->addAction(source); action->setCheckable(true); action->setChecked(source == "Flatpak"); sourceGroup->addAction(action);
-            connect(action, &QAction::triggered, this, [this, source] { sourceButton->setText(source); });
-        }
+        auto *sources = new QMenu(sourceButton);
         sourceButton->setMenu(sources); sourceButton->setToolTip("Choose software source"); toolbar->addWidget(sourceButton); outer->addLayout(toolbar);
         connect(back, &QToolButton::clicked, this, [this] { if (onBack) onBack(); });
         auto *shortcut = new QShortcut(QKeySequence("Alt+Left"), this);
@@ -164,65 +162,75 @@ public:
         linksLayout = new QVBoxLayout(linksPanel); linksLayout->setContentsMargins(24, 24, 24, 24); linksLayout->setSpacing(12);
         column->addWidget(linksPanel);
         outer->addWidget(content, 0, Qt::AlignHCenter); outer->addStretch();
-        QFile metadata(":/explore/details.json"); if (metadata.open(QIODevice::ReadOnly)) data = QJsonDocument::fromJson(metadata.readAll()).object();
     }
-    void showApp(const DemoApp &app, const QIcon &fallbackIcon = {}, const QString &platform = "Flatpak") {
+    // Text shown on the source button; history restores the choice by this text.
+    static QString packageLabel(const Package &package) {
+        if (package.source == Source::Flatpak) return "Flatpak · " + package.repo;
+        if (package.source == Source::Aur) return "AUR · " + package.name;
+        return "Repo · " + package.repo;
+    }
+    void showApp(const CatalogApp &app, const QString &platform = {}) {
         // Rebind per app; keep progress in the shared preview controller.
         if (installBinding) disconnect(installBinding);
-        if (operations) installBinding = operations->bind(install, app.id, app.name);
-        auto *menu = sourceButton->menu(); QAction *choice = nullptr;
-        for (auto *action : menu->actions()) if (action->text() == platform) choice = action;
-        if (!choice) {
-            choice = menu->addAction(platform); choice->setCheckable(true);
-            menu->actions().first()->actionGroup()->addAction(choice);
-            connect(choice, &QAction::triggered, this, [this, platform] { sourceButton->setText(platform); });
+        if (operations) installBinding = operations->bind(install, app.key, app.name);
+        auto *menu = sourceButton->menu(); menu->clear();
+        auto *group = new QActionGroup(menu); group->setExclusive(true);
+        QStringList labels;
+        for (const auto &package : app.packages) {
+            const QString label = packageLabel(package);
+            if (labels.contains(label)) continue;
+            labels.append(label);
+            auto *action = menu->addAction(package.version.isEmpty() ? label : label + " · " + package.version);
+            action->setData(label); action->setCheckable(true); group->addAction(action);
+            if (package.source == Source::Aur) action->setToolTip("Built from a community recipe that you review before building");
+            connect(action, &QAction::triggered, this, [this, label] { sourceButton->setText(label); });
         }
-        choice->setChecked(true); sourceButton->setText(platform);
-        currentId = app.id; title->setText(app.name); summary->setText(app.summary);
-        QIcon symbol(":/explore/" + app.id + ".png");
-        if (symbol.isNull()) symbol = fallbackIcon.isNull() ? QIcon::fromTheme("application-x-executable") : fallbackIcon;
-        icon->setPixmap(symbol.pixmap(96, 96));
-        const auto info = data.value(app.id).toObject();
-        description->setText(info.value("description").toString(app.summary));
-        if (description->text().isEmpty()) description->setText(app.summary);
+        if (labels.isEmpty()) {  // Local files (AppImage) and installed apps outside the catalogue
+            const QString label = platform.isEmpty() ? QString("Unknown source") : platform;
+            auto *action = menu->addAction(label); action->setData(label); action->setCheckable(true); group->addAction(action);
+            labels.append(label);
+        }
+        const QString chosen = labels.contains(platform) ? platform : labels.first();
+        for (auto *action : menu->actions()) action->setChecked(action->data().toString() == chosen);
+        sourceButton->setText(chosen); sourceButton->setEnabled(labels.size() > 1);
+        currentId = app.key; current = app; title->setText(app.name); summary->setText(app.summary);
+        icon->setPixmap(catalogIcon(app).pixmap(96, 96));
+        description->setText(readableDescription(app));
         descriptionExpanded = false; updateDescription();
-        QList<QPixmap> images;
-        for (const auto &file : info.value("screenshots").toArray()) {
-            QPixmap image(":/explore/" + file.toString()); if (!image.isNull()) images.append(image);
+        screenshot->setImages({}); screenshot->hide(); galleryControls->hide();
+        noScreenshot->setVisible(app.screenshots.isEmpty() && app.origin != MetadataOrigin::None);
+        const QString key = app.key;
+        pending.clear();
+        for (int i = 0; i < app.screenshots.size(); ++i) {
+            if (!backend) break;
+            backend->fetchImage(app.screenshots[i], this, [this, key, i](const QPixmap &image) {
+                if (currentId != key || image.isNull()) return;
+                pending.insert(i, image);
+                QList<QPixmap> ordered;  // Keep publisher order however downloads finish
+                for (auto it = pending.cbegin(); it != pending.cend(); ++it) ordered.append(it.value());
+                const int selected = screenshot->current;
+                screenshot->setImages(ordered); screenshot->select(qMin(selected, int(ordered.size()) - 1), false);
+                screenshot->show(); rebuildDots(ordered.size());
+            });
         }
-        if (images.isEmpty()) { QPixmap image(":/explore/" + app.id + "-screenshot.png"); if (!image.isNull()) images.append(image); }
-        screenshot->setImages(images); screenshot->setVisible(!images.isEmpty()); noScreenshot->hide();
-        dots.clear();
-        while (auto *item = galleryLayout->takeAt(0)) { delete item->widget(); delete item; }
-        galleryLayout->addStretch();
-        for (int i = 0; i < images.size(); ++i) {
-            auto *dot = new CarouselDot; dot->playful = true; dot->setAccessibleName(QString("Screenshot %1 of %2").arg(i + 1).arg(images.size()));
-            dot->setToolTip(dot->accessibleName()); dot->setChecked(i == 0); dots.append(dot); galleryLayout->addWidget(dot);
-            connect(dot, &QAbstractButton::clicked, this, [this, i] { screenshot->select(i); });
-        }
-        galleryLayout->addStretch(); galleryControls->setVisible(images.size() > 1);
-        const auto release = info.value("release").toObject();
-        QString version = release.value("version").toString();
-        const QDate date = QDate::fromString(release.value("date").toString(), Qt::ISODate);
-        if (date.isValid()) version += (version.isEmpty() ? "" : " · ") + QLocale().toString(date, QLocale::ShortFormat);
+        QString version = app.releaseVersion;
+        if (app.releaseDate.isValid()) version += (version.isEmpty() ? "" : " · ") + QLocale().toString(app.releaseDate, QLocale::ShortFormat);
         releaseVersion->setText(version); releaseVersion->setVisible(!version.isEmpty());
-        const QString notes = release.value("notes").toString().trimmed();
+        const QString notes = plainDescription(app.releaseNotes).trimmed();
         changelog->setText(notes); changelog->parentWidget()->setVisible(!notes.isEmpty());
         while (auto *item = addonLayout->takeAt(0)) { delete item->widget(); delete item; }
         addonLayout->addWidget(text("Add-ons", 16, true));
-        const auto addons = info.value("addons").toArray();
+        const auto addons = backend ? backend->addons(app) : QList<CatalogApp>();
         addonLayout->parentWidget()->setVisible(!addons.isEmpty());
-        for (const auto &value : addons) {
-            const auto addon = value.toObject();
-            const DemoApp target{addon.value("name").toString(), addon.value("summary").toString(), app.category, addon.value("id").toString()};
+        for (const auto &target : addons) {
             auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(14);
             auto *open = new QCommandLinkButton(target.name, target.summary); open->setObjectName("openAddon");
-            open->setIcon(QIcon::fromTheme("application-x-addon", QIcon::fromTheme("package-x-generic"))); open->setIconSize(QSize(28, 28));
-            open->setMinimumHeight(56); open->setAccessibleName("Open " + target.name + " details");
+            open->setIcon(target.iconPath.isEmpty() ? QIcon::fromTheme("application-x-addon", QIcon::fromTheme("package-x-generic")) : catalogIcon(target));
+            open->setIconSize(QSize(28, 28)); open->setMinimumHeight(56); open->setAccessibleName("Open " + target.name + " details");
             connect(open, &QAbstractButton::clicked, this, [this, target] { if (onOpenAddon) onOpenAddon(target); });
             auto *action = new QPushButton("Install"); action->setObjectName("installAddon"); action->setMinimumHeight(36);
             action->setIcon(QIcon::fromTheme("download"));
-            if (operations) operations->bind(action, target.id, target.name);
+            if (operations) operations->bind(action, target.key, target.name);
             layout->addWidget(open, 1); layout->addWidget(action); addonLayout->addWidget(row);
         }
         while (auto *item = linksLayout->takeAt(0)) { delete item->widget(); delete item; }
@@ -234,10 +242,12 @@ public:
             {"donation", {"Donate", "help-donate"}}, {"faq", {"Frequently asked questions", "help-contents"}},
             {"manifest", {"Manifest", "code-context"}}};
         int linkCount = 0;
-        for (const auto &value : info.value("links").toArray()) {
-            const auto link = value.toObject(); const QUrl url(link.value("url").toString());
+        QList<Link> links = app.links;
+        if (links.isEmpty() && !app.homepage.isEmpty()) links.append({"homepage", app.homepage});  // AUR packages carry only a URL
+        for (const auto &link : links) {
+            const QUrl url(link.url);
             if (!url.isValid() || url.host().isEmpty() || (url.scheme() != "https" && url.scheme() != "http")) continue;
-            const auto type = linkTypes.value(link.value("type").toString(), {"Project link", "internet-web-browser"});
+            const auto type = linkTypes.value(link.type, {"Project link", "internet-web-browser"});
             auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(14);
             auto *open = new QCommandLinkButton(type.first, url.toDisplayString()); open->setObjectName("appLink");
             open->setMinimumHeight(56); open->setIcon(QIcon::fromTheme(type.second)); open->setToolTip(url.toDisplayString());
@@ -248,27 +258,77 @@ public:
             layout->addWidget(open, 1); layout->addWidget(external); linksLayout->addWidget(row); ++linkCount;
         }
         linksLayout->parentWidget()->setVisible(linkCount > 0);
-        while (auto *item = permissionLayout->takeAt(0)) { delete item->widget(); delete item; }
-        const auto permissions = info.value("permissions").toArray();
-        permissionBody->parentWidget()->setVisible(!permissions.isEmpty());
-        const bool snapshot = !info.value("permissionSource").toString().isEmpty();
-        permissionNote->setText(snapshot ? "From the installed package snapshot. Permissions may differ in other versions." : "Permission information is not available for this sample app.");
-        for (const auto &value : permissions) {
-            const auto permission = value.toObject();
-            auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(14);
-            auto *symbol = new QLabel; symbol->setPixmap(QIcon::fromTheme(permission.value("icon").toString()).pixmap(24, 24)); symbol->setFixedWidth(30); layout->addWidget(symbol, 0, Qt::AlignTop);
-            auto *copy = new QVBoxLayout; copy->setSpacing(5); copy->addWidget(text(permission.value("name").toString(), 0, true)); copy->addWidget(text(permission.value("value").toString())); layout->addLayout(copy, 1);
-            permissionLayout->addWidget(row);
-        }
+        showPermissions({});
+        // Flatpak permissions come from the installed manifest; other sources have no sandbox to describe.
+        QString installedFlatpak;
+        if (backend) for (const auto &package : app.packages)
+            for (const auto &installed : backend->installed)
+                if (package.source == Source::Flatpak && installed.source == "Flatpak" && installed.id == package.name) installedFlatpak = package.name;
+        if (backend && !installedFlatpak.isEmpty())
+            backend->readCommand("flatpak", {"info", "-M", installedFlatpak}, [this, key](int code, QString output, QString) {
+                if (code == 0 && currentId == key) showPermissions(output);
+            });
         verticalScrollBar()->setValue(0);
     }
     void showGallery() { verticalScrollBar()->setValue(screenshot->mapTo(widget(), QPoint()).y() - 24); }
     void showChangelog() { if (!changelog->parentWidget()->isHidden()) verticalScrollBar()->setValue(findChild<QWidget *>("changelogPanel")->mapTo(widget(), QPoint()).y() - 20); }
-    void showPermissions() { if (!permissionBody->parentWidget()->isHidden()) verticalScrollBar()->setValue(permissionsHeading->mapTo(widget(), QPoint()).y() - 20); }
+    void scrollToPermissions() { if (!permissionBody->parentWidget()->isHidden()) verticalScrollBar()->setValue(permissionsHeading->mapTo(widget(), QPoint()).y() - 20); }
     bool check() const {
         return !currentId.isEmpty() && !title->text().isEmpty() && (!changelog->text().isEmpty() || changelog->parentWidget()->isHidden())
-            && data.contains(currentId) && (screenshot->images.isEmpty() == screenshot->isHidden())
-            && dots.size() == screenshot->images.size();
+            && (screenshot->images.isEmpty() == screenshot->isHidden()) && (dots.size() == screenshot->images.size() || screenshot->images.size() < 2);
+    }
+private:
+    // AppStream markup as plain paragraphs, without Flathub's packaging disclaimers.
+    static QString readableDescription(const CatalogApp &app) {
+        QStringList paragraphs;
+        for (const QString &paragraph : plainDescription(app.description).split('\n', Qt::SkipEmptyParts)) {
+            const QString lower = paragraph.toLower();
+            const bool disclaimer = lower.contains("flatpak") && (lower.contains("community maintained") || lower.contains("unofficial")
+                || lower.contains("not officially") || lower.contains("not affiliated") || lower.contains("not verified"));
+            if (!disclaimer) paragraphs.append(paragraph.trimmed());
+        }
+        return paragraphs.isEmpty() ? app.summary : paragraphs.join("\n\n");
+    }
+    void rebuildDots(int count) {
+        dots.clear();
+        while (auto *item = galleryLayout->takeAt(0)) { delete item->widget(); delete item; }
+        galleryLayout->addStretch();
+        for (int i = 0; i < count; ++i) {
+            auto *dot = new CarouselDot; dot->playful = true; dot->setAccessibleName(QString("Screenshot %1 of %2").arg(i + 1).arg(count));
+            dot->setToolTip(dot->accessibleName()); dot->setChecked(i == screenshot->current); dots.append(dot); galleryLayout->addWidget(dot);
+            connect(dot, &QAbstractButton::clicked, this, [this, i] { screenshot->select(i); });
+        }
+        galleryLayout->addStretch(); galleryControls->setVisible(count > 1);
+    }
+    // flatpak info -M output; empty hides the panel.
+    void showPermissions(const QString &manifest) {
+        while (auto *item = permissionLayout->takeAt(0)) { delete item->widget(); delete item; }
+        QMap<QString, QStringList> context;
+        bool inContext = false;
+        for (const QString &line : manifest.split('\n')) {
+            if (line.startsWith('[')) { inContext = line.trimmed() == "[Context]"; continue; }
+            const int equals = line.indexOf('=');
+            if (inContext && equals > 0) context.insert(line.left(equals).trimmed(), line.mid(equals + 1).split(';', Qt::SkipEmptyParts));
+        }
+        struct Row { QString icon, name, value; };
+        QList<Row> rows;
+        const QStringList shared = context.value("shared"), sockets = context.value("sockets"), devices = context.value("devices"), files = context.value("filesystems");
+        if (shared.contains("network")) rows.append({"network-wired", "Network", "Can use the internet"});
+        if (files.contains("host") || files.contains("host-os") || files.contains("home"))
+            rows.append({"folder-red", "Files", files.contains("home") && !files.contains("host") ? "Can read and change your home folder" : "Can read and change all your files"});
+        else if (!files.isEmpty()) rows.append({"folder", "Files", "Can access: " + files.join(", ")});
+        if (devices.contains("all")) rows.append({"preferences-desktop-peripherals", "Devices", "Can use all devices, such as webcams and game controllers"});
+        else if (!devices.isEmpty()) rows.append({"preferences-desktop-peripherals", "Devices", "Can use: " + devices.join(", ")});
+        if (sockets.contains("x11") || sockets.contains("fallback-x11")) rows.append({"preferences-system-windows", "Legacy display system", "Uses X11, which lets apps see other windows"});
+        if (sockets.contains("pulseaudio")) rows.append({"audio-volume-high", "Sound", "Can play and record audio"});
+        for (const auto &row : rows) {
+            auto *item = new QWidget; auto *layout = new QHBoxLayout(item); layout->setContentsMargins(0, 0, 0, 0); layout->setSpacing(14);
+            auto *symbol = new QLabel; symbol->setPixmap(QIcon::fromTheme(row.icon).pixmap(24, 24)); symbol->setFixedWidth(30); layout->addWidget(symbol, 0, Qt::AlignTop);
+            auto *copy = new QVBoxLayout; copy->setSpacing(5); copy->addWidget(text(row.name, 0, true)); copy->addWidget(text(row.value)); layout->addLayout(copy, 1);
+            permissionLayout->addWidget(item);
+        }
+        permissionNote->setText(rows.isEmpty() ? "This app asks for no special permissions." : "From the installed Flatpak. Permissions may differ in other versions.");
+        permissionBody->parentWidget()->setVisible(!manifest.isEmpty());
     }
 protected:
     void resizeEvent(QResizeEvent *event) override {
@@ -295,7 +355,7 @@ private:
         descriptionToggle->setAccessibleName(descriptionExpanded ? "Collapse app description" : "Expand app description");
     }
     QWidget *content = nullptr;
-    QJsonObject data;
+    QMap<int, QPixmap> pending;  // Downloaded screenshots by publisher position
     QWidget *galleryControls = nullptr;
     QHBoxLayout *galleryLayout = nullptr;
     QList<CarouselDot *> dots;

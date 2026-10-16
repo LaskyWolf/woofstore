@@ -6,7 +6,7 @@ THESIS: Let people discover apps through categories, artwork, compact app cards,
 
 OWN-WORLD: Native search, filter controls, and sidebar without a dividing line. Six dedicated category colors. Palette-derived app surfaces, real app icons, and existing publisher screenshots. No generated artwork.
 
-STORY: Search or choose a category, browse three featured apps, discover a varied collection, then use the A–Z directory. Any whole-card activation opens a separate local app-detail page; installation is not connected.
+STORY: Search or choose a category, browse featured apps and suggestion sections, then use the ranked directory. Any whole-card activation opens a separate local app-detail page; installation is not connected.
 
 FIRST VIEWPORT: Search and a separate Filters button, an expandable panel with source/sort controls and six colored category cards, then a featured carousel with no heading, arrows, or counter; clickable pagination dots sit beneath it. The carousel has app copy on the left and a publisher screenshot on the right, faded into the card surface with a radial fade from the top and a continuous left join. Compact discovery cards follow beneath it.
 
@@ -14,12 +14,12 @@ FORM: Precisely specified composition, inherited native visual world. No random 
 
 ## Prototype truth
 
-- Fixed 18-app sample catalogue; details identify cached preview metadata.
-- Three featured samples: Krita, Blender, Kdenlive.
+- Live merged catalogue from Flathub, pacman repositories, and the AUR.
+- Up to five featured apps from the Flathub popular ranking.
 - Search, categories, sorting, source filtering, clickable pagination dots, detail-page navigation, and empty states are local interactions.
 - AUR has an explicit not-connected state.
 - Explore widgets survive navigation and resize; backend callbacks cannot replace this page.
-- Assets are bundled for offline operation. Origins are recorded in assets/provenance.json and embedded in each PNG.
+- Icons come from cached AppStream data; screenshots download from publisher URLs into a disk cache.
 
 ## Review evidence
 
@@ -49,7 +49,7 @@ Updates inherits the 23 pt heading and 20/16/20/24 page margins with 16 px secti
 
 Both carousels use short rounded bars (24 × 7 px) and a longer active bar (80 × 7 px), with no button panels. The app gallery is a flat horizontal strip with equally sized image bounds, side peeks, circular navigation, and no pointer-focus selection border. Keyboard focus remains visible. Keep all existing publisher artwork.
 
-App details adds Install and a source menu in its top toolbar. Sources are Flatpak and AUR, presented as preview choices without a claim of checked availability. Install animates through Installing… to Open. Open does not launch an application. The A–Z directory adds the same quick action at the right. Installed rows put platform, origin, scope, and version once beneath the name; right actions are Remove and Reinstall. All new app actions are simulations, share per-app state, and leave packages untouched.
+App details adds Install and a source menu in its top toolbar. The source menu lists every package of the app with source, repository or package name, and version. Install animates through Installing… to Open. Open does not launch an application. The A–Z directory adds the same quick action at the right. Installed rows put platform, origin, scope, and version once beneath the name; right actions are Remove and Reinstall. All new app actions are simulations, share per-app state, and leave packages untouched.
 
 Updates uses the remaining page height for Available updates. A separate bottom panel has a full-width 44 px Update all action, with 32 px Check for updates and Review updates actions below. Existing real update confirmation remains required.
 

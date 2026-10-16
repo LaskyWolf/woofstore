@@ -20,9 +20,9 @@ Discover software, inspect app details, and manage installed software within one
 
 ## Current Prototype
 
-Explore uses a fixed offline catalogue of 18 sample Flathub apps. Search, filters, sorting, featured slides, a stable irregular discovery mosaic, and the A–Z directory operate on those samples. Load more changes to All apps loaded because every bundled sample is already visible.
+Explore shows the real catalogue: Flathub, every pacman repository including CachyOS, and the AUR. The same app from several sources is one entry with a source menu. Search, categories, featured apps, and suggestion sections use this catalogue and daily popularity rankings from Flathub and pkgstats. App details show the publisher description, screenshots, latest release, add-ons, links, and permissions of installed Flatpaks. Install, Remove, and Update remain simulations.
 
-Installed reads the backend inventory and merges session-only file preview rows. Every row opens the main Explore detail page. Known apps use bundled publisher metadata; unknown apps use available metadata and an icon fallback with explicit unavailable states. Remove, Reinstall, Install, and Open are simulations; they change no packages and launch no apps.
+Installed reads the backend inventory and merges session-only file preview rows. Every row opens the main Explore detail page. Known apps use catalogue metadata; unknown apps use available metadata and an icon fallback with explicit unavailable states. Remove, Reinstall, Install, and Open are simulations; they change no packages and launch no apps.
 
 Add AppImage, Add Flatpak, and drops anywhere on Installed accept local readable files with .AppImage, .flatpak, or .flatpakref extensions, case-insensitively. This checks file location, readability, and extension only. Accepted files queue previews without another confirmation. Canonical paths suppress duplicates. Preview rows survive inventory refresh for the current session. No files are copied, extracted, executed, or installed.
 

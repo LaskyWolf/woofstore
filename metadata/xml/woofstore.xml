@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WoofStore metadata for apps that Flathub and Arch do not describe. See metadata/README.md. -->
+<components version="1.0" origin="woofstore">
+  <component type="desktop-application">
+    <id>org.cachyos.hello</id>
+    <pkgname>cachyos-hello</pkgname>
+    <name>CachyOS Welcome</name>
+    <summary>Welcome screen for CachyOS</summary>
+    <description>
+      <p>The CachyOS welcome screen opens after installation and collects first steps for a new system in one window.</p>
+    </description>
+    <categories>
+      <category>System</category>
+    </categories>
+    <url type="homepage">https://github.com/cachyos/cachyos-welcome</url>
+    <url type="bugtracker">https://github.com/cachyos/cachyos-welcome/issues</url>
+    <launchable type="desktop-id">cachyos-hello.desktop</launchable>
+    <icon type="cached" width="64" height="64">org.cachyos.hello.png</icon>
+    <screenshots>
+      <screenshot type="default">
+        <image>https://github.com/user-attachments/assets/b555d6a5-9550-4869-9a41-734a09d806bf</image>
+      </screenshot>
+    </screenshots>
+  </component>
+  <component type="desktop-application">
+    <id>org.cachyos.KernelManager</id>
+    <pkgname>cachyos-kernel-manager</pkgname>
+    <name>CachyOS Kernel Manager</name>
+    <summary>Install and remove Linux kernels</summary>
+    <description>
+      <p>A simple kernel manager for Arch-based systems. It lists kernels from the enabled repositories and installs or removes them.</p>
+      <p>Kernels from the AUR are supported when paru is installed; this option is off by default.</p>
+    </description>
+    <categories>
+      <category>System</category>
+      <category>Settings</category>
+    </categories>
+    <url type="homepage">https://github.com/cachyos/kernel-manager</url>
+    <url type="bugtracker">https://github.com/cachyos/kernel-manager/issues</url>
+    <launchable type="desktop-id">org.cachyos.KernelManager.desktop</launchable>
+    <icon type="cached" width="64" height="64">org.cachyos.KernelManager.png</icon>
+  </component>
+  <component type="desktop-application">
+    <id>org.cachyos.PackageInstaller</id>
+    <pkgname>cachyos-packageinstaller</pkgname>
+    <name>CachyOS Package Installer</name>
+    <summary>Install popular applications in a few clicks</summary>
+    <description>
+      <p>A simple application installer for CachyOS that helps set up a new system by installing selected applications.</p>
+    </description>
+    <categories>
+      <category>System</category>
+      <category>PackageManager</category>
+    </categories>
+    <url type="homepage">https://github.com/cachyos/packageinstaller</url>
+    <url type="bugtracker">https://github.com/cachyos/packageinstaller/issues</url>
+    <launchable type="desktop-id">cachyos-pi.desktop</launchable>
+    <icon type="cached" width="64" height="64">org.cachyos.PackageInstaller.png</icon>
+  </component>
+</components>

@@ -36,7 +36,9 @@ public:
         if (!metadata.isEmpty()) {
             auto *source = new QLabel(metadata); source->setTextFormat(Qt::PlainText); source->setWordWrap(true);
             source->setAlignment(Qt::AlignRight | Qt::AlignVCenter); source->setMaximumWidth(180);
-            QFont font = source->font(); font.setPointSize(10); source->setFont(font); layout->addWidget(source);
+            QFont font = source->font(); font.setPointSize(10); source->setFont(font);
+            source->setMinimumWidth(qMin(180, QFontMetrics(font).horizontalAdvance(metadata) + 2));  // Short labels stay on one line
+            layout->addWidget(source);
         }
         if (operations) {
             for (const QString &action : installed ? QStringList{"Remove", "Reinstall"} : QStringList{"Install"}) {

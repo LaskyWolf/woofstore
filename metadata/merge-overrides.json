@@ -1,0 +1,8 @@
+{
+  "merge": {
+    "seafile-client": "com.seafile.Client",
+    "blackchocobo": "io.github.sithlord48.blackchocobo",
+    "concessio": "io.github.ronniedroid.concessio"
+  },
+  "separate": []
+}

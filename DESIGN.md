@@ -121,18 +121,18 @@ Use Quickpeek’s native KDE visual language with persistent store navigation. N
 **Key Characteristics:**
 
 - Persistent navigation beside scrollable software discovery.
-- Bundled application icons and publisher screenshots in the offline Explore prototype.
+- Publisher icons and screenshots from AppStream metadata in Explore.
 - Native dialogs and package-manager prompts inside one window.
 
 ### Direction contract
 
-**THESIS:** Discover sample apps through categories, publisher screenshots, compact cards, and a predictable alphabetical directory.
+**THESIS:** Discover apps from every source through search, categories, publisher screenshots, compact cards, and a ranked directory.
 
 **OWN-WORLD:** Preserve Quickpeek-style KDE chrome, system fonts, native controls, and the collapsible sidebar without a dividing line. Explore adds six dedicated category colors over palette-derived app surfaces.
 
-**STORY:** Search or choose a category, inspect three featured apps, browse the discovery collection, then use the A–Z directory. Explore activation opens a separate local app-detail page. New app actions simulate progress without changing packages or launching apps. Installed rows use the same main detail page. File and update actions remain previews; Check for updates retains its read-only command.
+**STORY:** Search or choose a category, inspect the featured apps, browse the suggestion sections, then use the paged directory. Explore activation opens a separate local app-detail page. New app actions simulate progress without changing packages or launching apps. Installed rows use the same main detail page. File and update actions remain previews; Check for updates retains its read-only command.
 
-**FIRST VIEWPORT:** Native search and a separate Filters button precede an expandable source/sort panel and nine colored category buttons. A three-slide carousel follows with app name and short caption left, publisher screenshot right, a radial fade from above, and a continuous leading-edge join. Only clickable pagination bars sit beneath the carousel. Stable mixed-width and mixed-height discovery cards and the always-A–Z directory follow.
+**FIRST VIEWPORT:** Native search and a separate Filters button precede an expandable source/sort panel and nine colored category buttons. A three-slide carousel follows with app name and short caption left, publisher screenshot right, a radial fade from above, and a continuous leading-edge join. Only clickable pagination bars sit beneath the carousel. Three suggestion sections of mixed-width and mixed-height cards and the paged directory follow.
 
 **FORM:** Precisely specified Explore composition within the user-pinned Quickpeek visual language. No concept-seed run or comp tournament applies. The surface contract is recorded in `.impeccable/explore-brief.md`.
 
@@ -216,19 +216,21 @@ A separate bottom DetailPanel uses 14 px padding and a 10 px gap. Update all spa
 
 Explore and Installed use native framed QLineEdit controls with search icons, clear buttons, accessible names, and 38 px minimum height. Installed's source selector remains a separate QComboBox with a 32 px minimum height; its search row uses zero margins and an 8 px gap. Add AppImage, Add Flatpak, and Refresh remain beside the Installed title. Read-only QPlainTextEdit displays update output and AUR build files. Preserve native focus, disabled states, and readable palette-derived placeholders.
 
-### Explore prototype
+### Explore
 
-The fixed catalogue contains 18 sample apps. Search, source/category filters, sorting, and empty states are local. AUR selection displays a not-connected state. Explore widgets survive navigation and resizing; backend callbacks do not replace the prototype.
+Explore shows the merged catalogue from Flathub, every pacman repository, and the AUR. Search waits 150 ms after typing, then ranks matches: exact name, name start, name or package name, then a word start in keywords or summary; popularity breaks ties. A completer suggests app names, most popular first. Apps with metadata list first; packages without metadata appear under Other packages. The directory and Other packages each show 50 rows and a Load more button with the remaining count. Source filters are All sources, Repositories, Flatpak, and AUR.
+
+The featured carousel shows up to five popular Flathub apps with screenshots. Three sections follow: Trending on Flathub, Popular in Arch, and Popular on AUR, eight cards each at most. Rankings refresh daily; offline, the last saved ranking shows with the note "Offline: showing saved suggestions."
 
 Search and Filters have 38 px minimum heights. The filter panel initially opens and groups native source/sort selectors, Clear filters, and six category buttons of at least 58 px height. Category controls include 22 px themed icons tinted white. Only one category is selected at a time.
 
-Three whole-click heroes feature Krita, Blender, and Kdenlive. Copy occupies the left 46 percent of each tile; cropped publisher imagery fills the remainder. A radial surface wash starts above the image at its leading edge. A horizontal join gradient spans the leading 32 percent of the image width, keeping the boundary continuous. Hero copy contains only the app name and short caption. No carousel heading, arrows, counter, View app button, or source footer is present.
+Whole-click heroes show the featured apps. Copy occupies the left 46 percent of each tile; cropped publisher imagery fills the remainder. A radial surface wash starts above the image at its leading edge. A horizontal join gradient spans the leading 32 percent of the image width, keeping the boundary continuous. Hero copy contains only the app name and short caption. No carousel heading, arrows, counter, View app button, or source footer is present.
 
 Pagination bars have the frontmatter inactive and active hit-target dimensions, accessible slide names, and keyboard focus. Their resting and hover appearance has no button panel; keyboard focus uses an explicit outline. Marks have fully rounded ends and use the frontmatter bar dimensions. Active marks use Highlight; inactive marks use WindowText at alpha 130. Heroes and discovery tiles use Highlight borders for hover or focus.
 
 The Explore title uses the explore-title token; no prototype-count badge appears beside it.
 
-Explore icons and 62 publisher screenshots across 18 app galleries are bundled for offline operation. `assets/provenance.json` records their Flathub AppStream origins; PNG files carry embedded origin metadata. No generated artwork is included.
+Icons come from cached AppStream data and the WoofStore metadata folder. Screenshots download from publisher URLs once and stay in a disk cache. Entries without an icon use the themed package icon (no metadata) or generic application icon (metadata without an icon). No generated artwork is included.
 
 ### Navigation
 
@@ -272,7 +274,7 @@ Closing the popup hides it and leaves the task running. Main-window closing is b
 
 - **Do** inherit the desktop palette, font family, control style, and icons.
 - **Do** keep software sources explicit on operational Installed rows and prototype source controls.
-- **Do** use metadata-backed icons and publisher screenshots with recorded origins; label Explore as an offline sample prototype.
+- **Do** use metadata-backed icons and publisher screenshots only.
 - **Do** keep details and confirmations explicit before package operations.
 - **Do** preserve the shared list inset and Explore deterministic mixed-span discovery geometry in narrow desktop windows.
 
@@ -308,7 +310,7 @@ Featured transitions follow index order: higher indices enter from the right; lo
 
 Featured cards place a native 130 × 36 px quick Install button 24 px from the bottom-right. Expanded mosaic previews place it 14 px from the top-right beside the icon. Both reuse shared simulated installation progress and Open state. Buttons act independently of whole-card detail navigation; no package operation occurs.
 
-App details replace rating content with a Latest changelog panel using the existing 24 px inset and 12 px spacing. Show the latest stable release’s version, date, and base-language or English notes from bundled Flathub AppStream metadata. Hide the changelog panel when notes are missing; never substitute an older release as current. Remove Preview badges and footer copy across pages. Preserve clear no-package-change behavior and sample-password explanation. Back and Show more/less are raised native tool buttons with a 36 px minimum height, matching Install.
+App details replace rating content with a Latest changelog panel using the existing 24 px inset and 12 px spacing. Show the latest release’s version, date, and notes from cached AppStream metadata. Hide the changelog panel when notes are missing; never substitute an older release as current. Remove Preview badges and footer copy across pages. Preserve clear no-package-change behavior and sample-password explanation. Back and Show more/less are raised native tool buttons with a 36 px minimum height, matching Install.
 
 Navigation stores visits to Explore, Installed, Updates, and app details. Mouse Back/Forward buttons move through those visits. Save the source page’s vertical position and focus before opening details; return without inventory reload or filter reset. Details preserve the originating sidebar section and label Back as Explore or Installed. Forward reopens the same app; a new visit after Back discards the forward branch. Details entry focuses the page container.
 
@@ -318,7 +320,7 @@ Activity includes a native Clear button beside Close. Clear completed history wh
 
 Detail sections follow Latest changelog, Add-ons, Permissions, Links. Add-ons come from cached AppStream extends relationships, with one entry per package ID. Native command-link rows open add-on details through navigation history; separate Install buttons use the shared simulated controller. Links show publisher HTTP(S) URLs and the Flathub manifest, with themed icons and native browser opening. Hide empty changelog, add-on, permission, link, and screenshot sections, including their headings and layout spacing. Re-evaluate visibility when changing apps.
 
-Explore starts with Filters unchecked and its panel hidden. Use nine Flathub category buttons in three columns: Audio & Video, Developer Tools, Education & Science, Games, Graphics & Photography, Networking, Productivity, System, Utilities. Education and Science share one filter. Match bundled publisher AppStream category IDs, allowing apps to belong to multiple groups. Longer category names use two lines. Add-on command-link rows replace the native arrow with a themed add-on/package icon.
+Explore starts with Filters unchecked and its panel hidden. Use nine Flathub category buttons in three columns: Audio & Video, Developer Tools, Education & Science, Games, Graphics & Photography, Networking, Productivity, System, Utilities. Education and Science share one filter. Each app belongs to the first matching group: Games, Graphics, Audio & Video, Developer Tools, Education & Science, Networking, Productivity, System, Utilities. Longer category names use two lines. Add-on command-link rows replace the native arrow with a themed add-on/package icon.
 
 Empty Activity uses a plain two-line label above an empty transparent list, with no placeholder list item or card background. Disabled Clear remains noninteractive with an arrow cursor and 40 percent opacity; available Clear uses native appearance at full opacity.
 

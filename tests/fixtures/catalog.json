@@ -1,0 +1,282 @@
+{
+ "apps": [
+  {
+   "key": "org.kde.krita",
+   "name": "Krita",
+   "summary": "Digital painting, creative freedom",
+   "description": "<p>This flatpak is community maintained. Please report Flatpak specific bugs that do not occur on the upstream AppImage at https://github.com/flathub/org.kde.krita/issues.</p><p>Krita is the full-featured digital art studio.</p><p>It is perfect for sketching and painting, and presents an end–to–end solution for creating digital painting files from scratch by masters.</p><p>Krita is a great choice for creating concept art, comics, textures for rendering and matte paintings. Krita supports many colorspaces like RGB and CMYK at 8 and 16 bits integer channels, as well as 16 and 32 bits floating point channels.</p><p>Have fun painting with the advanced brush engines, amazing filters and many handy features that make Krita enormously productive.</p>",
+   "icon": "images/org.kde.krita.png",
+   "categories": [
+    "Graphics",
+    "2DGraphics"
+   ],
+   "keywords": [
+    "paint",
+    "drawing"
+   ],
+   "screenshots": [
+    "images/org.kde.krita-screenshot.png",
+    "images/org.kde.krita-screenshot-2.png",
+    "images/org.kde.krita-screenshot-3.png"
+   ],
+   "links": [
+    {
+     "type": "homepage",
+     "url": "https://www.krita.org/"
+    },
+    {
+     "type": "bugtracker",
+     "url": "https://docs.krita.org/en/untranslatable_pages/reporting_bugs.html"
+    },
+    {
+     "type": "faq",
+     "url": "https://docs.krita.org/KritaFAQ.html"
+    },
+    {
+     "type": "help",
+     "url": "https://docs.krita.org/"
+    },
+    {
+     "type": "donation",
+     "url": "https://krita.org/support-us/donations/"
+    },
+    {
+     "type": "contribute",
+     "url": "https://docs.krita.org/en/contributors_manual.html"
+    }
+   ],
+   "packages": [
+    {
+     "source": "repo",
+     "name": "krita",
+     "repo": "extra",
+     "version": "5.3.4-1"
+    },
+    {
+     "source": "flatpak",
+     "name": "org.kde.krita",
+     "repo": "flathub",
+     "version": "5.3.4.1"
+    },
+    {
+     "source": "aur",
+     "name": "krita-git",
+     "repo": "aur",
+     "version": "5.3.0.r12-1",
+     "popularity": 0.4
+    }
+   ],
+   "release": {
+    "version": "5.3.4.1",
+    "date": "2026-10-07",
+    "notes": "<p>A minor bugfix release for the Krita Stable channel</p>"
+   },
+   "origin": "appstream",
+   "homepage": "https://www.krita.org/"
+  },
+  {
+   "key": "org.mozilla.firefox",
+   "name": "Firefox",
+   "summary": "Fast, private and safe web browser",
+   "description": "<p>When it comes to your life online, you have a choice: accept the factory settings or put your privacy first. When you choose Firefox as your default browser, you’re choosing to protect your data while supporting an independent tech company. Firefox is also the only major browser backed by a non-profit fighting to give you more openness, transparency and control of your life online. Join hundreds of millions of people who choose to protect what&#x27;s important by choosing Firefox - a web browser designed to be fast, easy to use, customizable and private.</p>",
+   "icon": "images/org.mozilla.firefox.png",
+   "categories": [
+    "Network",
+    "WebBrowser"
+   ],
+   "keywords": [
+    "browser",
+    "web"
+   ],
+   "screenshots": [
+    "images/org.mozilla.firefox-screenshot.png"
+   ],
+   "links": [
+    {
+     "type": "bugtracker",
+     "url": "https://bugzilla.mozilla.org/"
+    },
+    {
+     "type": "donation",
+     "url": "https://donate.mozilla.org/"
+    },
+    {
+     "type": "help",
+     "url": "https://support.mozilla.org/"
+    },
+    {
+     "type": "homepage",
+     "url": "https://www.mozilla.org/firefox/"
+    },
+    {
+     "type": "translate",
+     "url": "https://wiki.mozilla.org/L10n:Starting_a_localization"
+    }
+   ],
+   "packages": [
+    {
+     "source": "repo",
+     "name": "firefox",
+     "repo": "extra",
+     "version": "158.0-1"
+    },
+    {
+     "source": "flatpak",
+     "name": "org.mozilla.firefox",
+     "repo": "flathub",
+     "version": "158.0"
+    }
+   ],
+   "release": {
+    "version": "158.0",
+    "date": "2026-10-07",
+    "notes": ""
+   },
+   "origin": "appstream",
+   "homepage": "https://www.mozilla.org/firefox/"
+  },
+  {
+   "key": "org.gimp.gimp",
+   "name": "GIMP",
+   "summary": "Create images and edit photographs",
+   "description": "<p>GIMP is an acronym for GNU Image Manipulation Program. It is Community-driven Free Software for high-end image creation and manipulation.</p><p>It has many capabilities. It can be used as a paint program, an expert quality photo retouching program, image composition, an online batch processing system, a mass production image renderer, an image format converter, etc.</p><p>GIMP is expandable and extensible. It is designed to be augmented with plug-ins and extensions to do just about anything. The advanced scripting interface allows everything from the simplest task to the most complex image manipulation procedures to be easily scripted. GIMP is available for Linux, Microsoft Windows and macOS.</p>",
+   "icon": "images/org.gimp.GIMP.png",
+   "categories": [
+    "Graphics",
+    "Photography"
+   ],
+   "keywords": [
+    "photo"
+   ],
+   "screenshots": [
+    "images/org.gimp.GIMP-screenshot.png"
+   ],
+   "links": [
+    {
+     "type": "homepage",
+     "url": "https://www.gimp.org/"
+    },
+    {
+     "type": "bugtracker",
+     "url": "https://www.gimp.org/bugs/"
+    },
+    {
+     "type": "help",
+     "url": "https://www.gimp.org/docs/"
+    },
+    {
+     "type": "donation",
+     "url": "https://www.gimp.org/donating/"
+    },
+    {
+     "type": "vcs-browser",
+     "url": "https://gitlab.gnome.org/GNOME/gimp/"
+    },
+    {
+     "type": "contribute",
+     "url": "https://www.gimp.org/develop/"
+    }
+   ],
+   "packages": [
+    {
+     "source": "flatpak",
+     "name": "org.gimp.GIMP",
+     "repo": "flathub",
+     "version": "3.2.6"
+    }
+   ],
+   "release": {
+    "version": "3.2.6",
+    "date": "2026-09-10",
+    "notes": "<p>This new bugfix release of GIMP 3.2 brings a whole new level of stability:</p><p>New input axis &quot;Rotation&quot; (a.k.a. &quot;barrel rotation&quot;) supported in dynamics</p><p>Bug fixes and usability improvements to recently added features and non-destructive workflows</p><p>A lot of maintenance love happened for the macOS version</p><p>gimptool utility can now compile GEGL operations (filters) and work better on macOS, Windows and AppImage</p><p>Many file formats support improved</p><p>Various vulnerabilities fixed</p>"
+   },
+   "origin": "appstream",
+   "homepage": "https://www.gimp.org/",
+   "addons": [
+    {
+     "key": "org.gimp.gimp.plugin.bimp",
+     "name": "BIMP",
+     "summary": "Batch Image Manipulation Program GIMP plugin",
+     "packages": [
+      {
+       "source": "flatpak",
+       "name": "org.gimp.GIMP.Plugin.BIMP",
+       "repo": "flathub"
+      }
+     ]
+    },
+    {
+     "key": "org.gimp.gimp.plugin.focusblur",
+     "name": "FocusBlur",
+     "summary": "FocusBlur GIMP Plugin",
+     "packages": [
+      {
+       "source": "flatpak",
+       "name": "org.gimp.GIMP.Plugin.FocusBlur",
+       "repo": "flathub"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "aur:pacseek",
+   "name": "pacseek",
+   "summary": "A terminal user interface for searching and installing Arch Linux packages",
+   "homepage": "https://github.com/moson-mo/pacseek",
+   "packages": [
+    {
+     "source": "aur",
+     "name": "pacseek",
+     "repo": "aur",
+     "version": "1.8.4-1",
+     "popularity": 0.9
+    }
+   ],
+   "origin": "none"
+  },
+  {
+   "key": "pkg:python-requests",
+   "name": "python-requests",
+   "summary": "Python HTTP for Humans",
+   "packages": [
+    {
+     "source": "repo",
+     "name": "python-requests",
+     "repo": "extra",
+     "version": "2.32.5-1"
+    }
+   ],
+   "origin": "none"
+  }
+ ],
+ "popular": [
+  "org.mozilla.firefox",
+  "org.kde.krita",
+  "org.gimp.GIMP"
+ ],
+ "trending": [
+  "org.gimp.GIMP",
+  "org.kde.krita"
+ ],
+ "installs": {
+  "org.mozilla.firefox": 200000,
+  "org.kde.krita": 40000,
+  "org.gimp.GIMP": 90000
+ },
+ "pkgstats": {
+  "firefox": 60.1,
+  "krita": 22.6,
+  "python-requests": 70.2
+ },
+ "aur": [
+  {
+   "name": "pacseek",
+   "version": "1.8.4-1"
+  },
+  {
+   "name": "woof-quiet",
+   "version": "0.1-1"
+  }
+ ]
+}
