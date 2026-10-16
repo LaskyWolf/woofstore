@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     assert(copy.readAll() == bytes);
     const auto apps = importedAppImages(root);
     assert(apps.size() == 1 && apps[0].name == "My App%25" && apps[0].path == imported);
-    QFile launcher(root + "/applications/cachy-store-" + apps[0].id + ".desktop");
+    QFile launcher(root + "/applications/woof-store-" + apps[0].id + ".desktop");
     assert(launcher.open(QIODevice::ReadOnly));
     assert(launcher.readAll().contains("Exec=" + desktopQuote(imported).toUtf8()));
     assert(importAppImage(source, root, &error).isEmpty() && error.contains("already"));
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
         QEventLoop loop;
         bool done = false;
         const int previous = callbackCount;
-        backend.readCommand(timed ? "/usr/bin/sleep" : "/definitely-missing-cachystore-program", timed ? QStringList{"2"} : QStringList{},
+        backend.readCommand(timed ? "/usr/bin/sleep" : "/definitely-missing-woofstore-program", timed ? QStringList{"2"} : QStringList{},
             [&](int code, QString, QString failure) {
                 ++callbackCount;
                 assert(code != 0 && !failure.isEmpty());

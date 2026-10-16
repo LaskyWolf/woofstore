@@ -1,4 +1,4 @@
-# Cachy Store
+# WoofStore
 
 <!-- impeccable:product-schema 1 -->
 

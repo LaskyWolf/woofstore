@@ -64,12 +64,12 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
     QString title = QFileInfo(file).completeBaseName();
     title.replace(QRegularExpression("[\\x00-\\x1f\\x7f]"), " ");
     title.replace("\\", "_");
-    const QString appDir = dataRoot + "/CachyStore/appimages";
+    const QString appDir = dataRoot + "/WoofStore/appimages";
     const QString desktopDir = dataRoot + "/applications";
     if (dataRoot.contains('\n') || dataRoot.contains('\r')) return fail("The application data path contains unsupported characters.");
     if (!QDir().mkpath(appDir) || !QDir().mkpath(desktopDir)) return fail("Cannot create the app or launcher folder.");
     const QString dest = appDir + '/' + id + ".AppImage";
-    const QString launcher = desktopDir + "/cachy-store-" + id + ".desktop";
+    const QString launcher = desktopDir + "/woof-store-" + id + ".desktop";
     if (QFileInfo::exists(dest) || QFileInfo::exists(launcher)) return fail("This AppImage is already imported, or its destination already exists.");
     source.seek(0);
     QSaveFile copy(dest);
@@ -88,7 +88,7 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
         return fail("Cannot make the imported AppImage executable.");
     }
     QSaveFile desktop(launcher);
-    const QByteArray entry = QString("[Desktop Entry]\nType=Application\nName=%1\nExec=%2\nIcon=application-x-executable\nTerminal=false\nCategories=Utility;\nX-CachyStore-AppImage=%3\n")
+    const QByteArray entry = QString("[Desktop Entry]\nType=Application\nName=%1\nExec=%2\nIcon=application-x-executable\nTerminal=false\nCategories=Utility;\nX-WoofStore-AppImage=%3\n")
                                  .arg(title, desktopQuote(dest), id).toUtf8();
     if (!desktop.open(QIODevice::WriteOnly) || desktop.write(entry) != entry.size() || !desktop.commit()) {
         QFile::remove(dest);
@@ -100,13 +100,13 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
 
 Apps importedAppImages(const QString &dataRoot) {
     Apps result;
-    const QDir folder(dataRoot + "/CachyStore/appimages");
+    const QDir folder(dataRoot + "/WoofStore/appimages");
     for (const QString &file : folder.entryList({"*.AppImage"}, QDir::Files)) {
         App app;
         app.id = QFileInfo(file).completeBaseName();
         app.path = folder.absoluteFilePath(file);
         app.name = app.id;
-        QFile launcher(dataRoot + "/applications/cachy-store-" + app.id + ".desktop");
+        QFile launcher(dataRoot + "/applications/woof-store-" + app.id + ".desktop");
         if (launcher.open(QIODevice::ReadOnly)) {
             for (const QByteArray &line : launcher.readAll().split('\n'))
                 if (line.startsWith("Name=")) app.name = QString::fromUtf8(line.mid(5));
@@ -305,7 +305,7 @@ void Backend::prepareAur(const App &app, std::function<void(QString, QString, QS
     reviewedHashes.clear();
     const quint64 generation = ++reviewGeneration;
     if (!validPackageName(app.base)) { done({}, {}, "Invalid AUR package base."); return; }
-    auto temp = std::make_shared<QTemporaryDir>(QDir::tempPath() + "/cachy-store-review-XXXXXX");
+    auto temp = std::make_shared<QTemporaryDir>(QDir::tempPath() + "/woof-store-review-XXXXXX");
     if (!temp->isValid()) { done({}, {}, "Cannot create a review folder."); return; }
     review = temp;
     const QString checkout = temp->path() + "/package";

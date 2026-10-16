@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Cachy Store
+Name=WoofStore
 Comment=Browse Flatpak and AUR apps and manage CachyOS updates
-Exec=cachy-store
+Exec=woof-store
 Icon=system-software-install
 Terminal=false
 Categories=System;PackageManager;

@@ -1,5 +1,5 @@
 ---
-name: Cachy Store
+name: WoofStore
 description: Native KDE software discovery and maintenance
 colors:
   category-create: "#674296"
@@ -110,7 +110,7 @@ components:
     height: "32px"
 ---
 
-# Design System: Cachy Store
+# Design System: WoofStore
 
 ## Overview
 

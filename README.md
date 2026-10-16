@@ -1,4 +1,4 @@
-# Cachy Store
+# WoofStore
 
 A native Qt 6 / KDE store for CachyOS with a persistent sidebar and Quickpeek-style native controls and subtle trays.
 
@@ -16,7 +16,7 @@ Build from this directory:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
-./build/cachy-store
+./build/woof-store
 ```
 
 Run the store as your normal user. Package managers request elevated privileges only when needed.
@@ -54,10 +54,10 @@ AUR searching, recipe review, and real installations remain unconnected to this 
 ## Preview and harmless terminal test
 
 ```bash
-QT_QPA_PLATFORM=offscreen ./build/cachy-store --screenshot /tmp/cachy-store.png
-./build/cachy-store --terminal-demo
-QT_QPA_PLATFORM=offscreen ./build/cachy-store --explore-check
-QT_QPA_PLATFORM=offscreen ./build/cachy-store --terminal-check
+QT_QPA_PLATFORM=offscreen ./build/woof-store --screenshot /tmp/woof-store.png
+./build/woof-store --terminal-demo
+QT_QPA_PLATFORM=offscreen ./build/woof-store --explore-check
+QT_QPA_PLATFORM=offscreen ./build/woof-store --terminal-check
 QT_QPA_PLATFORM=offscreen STORE_LIVE_TESTS=1 ./build/store-tests
 ```
 
@@ -71,7 +71,7 @@ Optional installation for your user account:
 cmake --install build --prefix "$HOME/.local"
 ```
 
-The desktop launcher calls `cachy-store`; ensure `$HOME/.local/bin` is on your desktop session's PATH.
+The desktop launcher calls `woof-store`; ensure `$HOME/.local/bin` is on your desktop session's PATH.
 
 App cards open an offline detail page inspired by Flathub: icon, publisher description collapsed to six lines with Show more / Show less, screenshot carousel, latest changelog, and permission panel. Release notes come from the bundled Flathub AppStream snapshot; missing notes are stated explicitly. Permission rows are cached installed-package snapshots and are not a security verdict. Use Back or Alt+Left to return to Explore.
 

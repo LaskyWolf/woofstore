@@ -55,7 +55,7 @@ public:
         if (part) { disconnect(part, nullptr, this, nullptr); delete part; }
     }
     explicit Store(bool loadCatalogue = true) : inventoryEnabled(loadCatalogue) {
-        setWindowTitle("Cachy Store");
+        setWindowTitle("WoofStore");
         setWindowIcon(QIcon::fromTheme("system-software-install"));
         resize(1180, 850);
         setMinimumSize(720, 580);
@@ -343,7 +343,7 @@ public:
         // Fixed wrapper; package names, paths and arguments are positional data, never shell code.
         const QString wrapper = "cd -- \"$1\" || exit 1; shift; \"$@\"; code=$?; printf '\\nCommand exit code: %s\\nPress Enter to close this activity.' \"$code\"; IFS= read -r answer; exit \"$code\"";
         // KonsolePart expects argv[0] in its argument list (unlike QProcess).
-        QStringList args = {"/usr/bin/bash", "-c", wrapper, "cachy-store-activity", cwd.isEmpty() ? QDir::homePath() : cwd, executable};
+        QStringList args = {"/usr/bin/bash", "-c", wrapper, "woof-store-activity", cwd.isEmpty() ? QDir::homePath() : cwd, executable};
         args.append(arguments);
         terminal->startProgram("/usr/bin/bash", args);
         part->widget()->setFocus();
@@ -613,10 +613,10 @@ int main(int argc, char **argv) {
     QApplication application(argc, argv);
     // Headless previews have no desktop menu-bar service.
     if (application.platformName() == "offscreen") application.setAttribute(Qt::AA_DontUseNativeMenuBar);
-    application.setApplicationName("CachyStore");
-    application.setApplicationDisplayName("Cachy Store");
-    application.setOrganizationName("CachyStore");
-    if (geteuid() == 0) { qCritical("Run Cachy Store as your normal user. Package managers request elevation when needed."); return 1; }
+    application.setApplicationName("WoofStore");
+    application.setApplicationDisplayName("WoofStore");
+    application.setOrganizationName("WoofStore");
+    if (geteuid() == 0) { qCritical("Run WoofStore as your normal user. Package managers request elevation when needed."); return 1; }
     if (QIcon::themeName().isEmpty()) QIcon::setThemeName("breeze");
     QIcon::setFallbackThemeName("breeze");
     QCommandLineParser parser;
