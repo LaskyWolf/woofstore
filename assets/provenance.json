@@ -1,0 +1,322 @@
+{
+  "org.kde.krita.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.kde.krita.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.blender.Blender.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.blender.Blender.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.kde.kdenlive.desktop.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.kde.kdenlive.desktop.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.mozilla.firefox.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.mozilla.firefox.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.videolan.VLC.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.videolan.VLC.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "com.usebottles.bottles.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/com.usebottles.bottles.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gimp.GIMP.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gimp.GIMP.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.inkscape.Inkscape.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.inkscape.Inkscape.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "md.obsidian.Obsidian.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/md.obsidian.Obsidian.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.Builder.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.Builder.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.Solanum.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.Solanum.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "com.spotify.Client.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/com.spotify.Client.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.Boxes.desktop.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.Boxes.desktop.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.telegram.desktop.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.telegram.desktop.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "com.obsproject.Studio.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/com.obsproject.Studio.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.Calculator.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.Calculator.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.World.PikaBackup.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.World.PikaBackup.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.gnome.Fractal.png": {
+    "origin": "/var/lib/flatpak/appstream/flathub/x86_64/49abb29e9d75e5a5a669db77e063ac17245bd3a1b785612f499f125182094815/icons/128x128/org.gnome.Fractal.png",
+    "source": "Flathub AppStream app icon"
+  },
+  "org.blender.Blender-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/blender/Blender/c6b07403115901571923d99f1b725b0e/screenshots/image-1_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.kdenlive.desktop-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/kdenlive.desktop/28bad987721e9df9cd2c254eb376bb11/screenshots/image-1_752x445@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.krita-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/krita/1348962dcc0842250c4ce6876acc36cc/screenshots/image-1_752x408@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.obsproject.Studio-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/com/obsproject/Studio/b24d8f7f7f9672e48342e70759b01e5e/screenshots/image-1_752x526@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.spotify.Client-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/com/spotify/Client/2be38d678bbcc0e04cec0c19c60a80fe/screenshots/image-1_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.usebottles.bottles-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/com/usebottles/bottles/9d262585bbb7e779072f16bec4824a7e/screenshots/image-1_752x586@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "md.obsidian.Obsidian-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/md/obsidian/Obsidian/4902fe5d9fec13519c5524761123cdeb/screenshots/image-1_752x398@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gimp.GIMP-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gimp/GIMP/95e6d7d59d33a0f9364535dbe023d807/screenshots/image-1_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Boxes.desktop-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Boxes.desktop/21197cc56a7bd29d89fe91d2bda9b910/screenshots/image-1_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Builder-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Builder/18ce275bf2230a495c992e08b5fbf088/screenshots/image-1_752x471@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Calculator-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Calculator/e38157e4387ef6a0aef6faed3debf861/screenshots/image-1_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Fractal-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Fractal/3bde70449e8e309c419aa7ab536d347f/screenshots/image-1_752x557@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Solanum-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Solanum/b3037afcd041be5783a235cbcf66528f/screenshots/image-1_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.World.PikaBackup-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/World.PikaBackup/bed402ded7f6226f1c6d7fc1f72fec9f/screenshots/image-1_752x646@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.inkscape.Inkscape-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/inkscape/Inkscape/d06b79da7ad6df73032683fbcf8c4d56/screenshots/image-1_752x462@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.mozilla.firefox-screenshot.png": {
+    "origin": "https://dl.flathub.org/repo/screenshots/org.mozilla.firefox-stable/752x423/org.mozilla.firefox-af5d1ae7c121ea4864b3c5a1098f8f9c.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.telegram.desktop-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/telegram/desktop/0477faef98bba31f7de7ec0031eb1e57/screenshots/image-1_752x519@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.videolan.VLC-screenshot.png": {
+    "origin": "https://dl.flathub.org/media/org/videolan/VLC/34e7c2b6a026c5c290606225a84582d3/screenshots/image-1_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.spotify.Client-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/com/spotify/Client/2be38d678bbcc0e04cec0c19c60a80fe/screenshots/image-2_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.spotify.Client-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/com/spotify/Client/2be38d678bbcc0e04cec0c19c60a80fe/screenshots/image-3_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.spotify.Client-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/com/spotify/Client/2be38d678bbcc0e04cec0c19c60a80fe/screenshots/image-4_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.usebottles.bottles-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/com/usebottles/bottles/9d262585bbb7e779072f16bec4824a7e/screenshots/image-2_752x586@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.usebottles.bottles-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/com/usebottles/bottles/9d262585bbb7e779072f16bec4824a7e/screenshots/image-3_752x586@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "com.usebottles.bottles-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/com/usebottles/bottles/9d262585bbb7e779072f16bec4824a7e/screenshots/image-4_752x586@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "md.obsidian.Obsidian-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/md/obsidian/Obsidian/4902fe5d9fec13519c5524761123cdeb/screenshots/image-2_752x863@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "md.obsidian.Obsidian-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/md/obsidian/Obsidian/4902fe5d9fec13519c5524761123cdeb/screenshots/image-3_752x526@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "md.obsidian.Obsidian-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/md/obsidian/Obsidian/4902fe5d9fec13519c5524761123cdeb/screenshots/image-4_752x503@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.blender.Blender-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/blender/Blender/c6b07403115901571923d99f1b725b0e/screenshots/image-2_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.blender.Blender-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/blender/Blender/c6b07403115901571923d99f1b725b0e/screenshots/image-3_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.blender.Blender-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/blender/Blender/c6b07403115901571923d99f1b725b0e/screenshots/image-4_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gimp.GIMP-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gimp/GIMP/95e6d7d59d33a0f9364535dbe023d807/screenshots/image-2_752x410@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gimp.GIMP-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gimp/GIMP/95e6d7d59d33a0f9364535dbe023d807/screenshots/image-3_752x410@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gimp.GIMP-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/gimp/GIMP/95e6d7d59d33a0f9364535dbe023d807/screenshots/image-4_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Boxes.desktop-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Boxes.desktop/21197cc56a7bd29d89fe91d2bda9b910/screenshots/image-2_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Boxes.desktop-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Boxes.desktop/21197cc56a7bd29d89fe91d2bda9b910/screenshots/image-3_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Boxes.desktop-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Boxes.desktop/21197cc56a7bd29d89fe91d2bda9b910/screenshots/image-4_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Builder-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Builder/18ce275bf2230a495c992e08b5fbf088/screenshots/image-2_752x617@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Builder-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Builder/18ce275bf2230a495c992e08b5fbf088/screenshots/image-3_752x617@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Builder-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Builder/18ce275bf2230a495c992e08b5fbf088/screenshots/image-4_752x617@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Calculator-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Calculator/e38157e4387ef6a0aef6faed3debf861/screenshots/image-2_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Calculator-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Calculator/e38157e4387ef6a0aef6faed3debf861/screenshots/image-3_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Calculator-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Calculator/e38157e4387ef6a0aef6faed3debf861/screenshots/image-4_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Fractal-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Fractal/3bde70449e8e309c419aa7ab536d347f/screenshots/image-2_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Fractal-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Fractal/3bde70449e8e309c419aa7ab536d347f/screenshots/image-3_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.Solanum-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/Solanum/b3037afcd041be5783a235cbcf66528f/screenshots/image-2_orig.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.World.PikaBackup-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/World.PikaBackup/bed402ded7f6226f1c6d7fc1f72fec9f/screenshots/image-2_752x646@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.gnome.World.PikaBackup-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/gnome/World.PikaBackup/bed402ded7f6226f1c6d7fc1f72fec9f/screenshots/image-3_752x646@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.inkscape.Inkscape-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/inkscape/Inkscape/d06b79da7ad6df73032683fbcf8c4d56/screenshots/image-2_752x461@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.inkscape.Inkscape-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/inkscape/Inkscape/d06b79da7ad6df73032683fbcf8c4d56/screenshots/image-3_752x460@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.inkscape.Inkscape-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/inkscape/Inkscape/d06b79da7ad6df73032683fbcf8c4d56/screenshots/image-4_752x459@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.kdenlive.desktop-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/kdenlive.desktop/28bad987721e9df9cd2c254eb376bb11/screenshots/image-2_752x429@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.kdenlive.desktop-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/kdenlive.desktop/28bad987721e9df9cd2c254eb376bb11/screenshots/image-3_752x431@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.kdenlive.desktop-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/kdenlive.desktop/28bad987721e9df9cd2c254eb376bb11/screenshots/image-4_752x442@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.krita-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/krita/1348962dcc0842250c4ce6876acc36cc/screenshots/image-2_752x408@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.krita-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/krita/1348962dcc0842250c4ce6876acc36cc/screenshots/image-3_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.kde.krita-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/kde/krita/1348962dcc0842250c4ce6876acc36cc/screenshots/image-4_752x408@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.mozilla.firefox-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/repo/screenshots/org.mozilla.firefox-stable/752x423/org.mozilla.firefox-c6f98b38b8b28b113a75a6b34037b759.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.mozilla.firefox-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/repo/screenshots/org.mozilla.firefox-stable/752x423/org.mozilla.firefox-60e855c1f4180607e40c9762a0fb9fa6.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.telegram.desktop-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/telegram/desktop/0477faef98bba31f7de7ec0031eb1e57/screenshots/image-2_752x470@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.telegram.desktop-screenshot-3.png": {
+    "origin": "https://dl.flathub.org/media/org/telegram/desktop/0477faef98bba31f7de7ec0031eb1e57/screenshots/image-3_752x470@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.telegram.desktop-screenshot-4.png": {
+    "origin": "https://dl.flathub.org/media/org/telegram/desktop/0477faef98bba31f7de7ec0031eb1e57/screenshots/image-4_752x470@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  },
+  "org.videolan.VLC-screenshot-2.png": {
+    "origin": "https://dl.flathub.org/media/org/videolan/VLC/34e7c2b6a026c5c290606225a84582d3/screenshots/image-2_752x423@1.png",
+    "source": "Publisher screenshot distributed by Flathub AppStream"
+  }
+}

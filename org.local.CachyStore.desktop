@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Cachy Store
+Comment=Browse Flatpak and AUR apps and manage CachyOS updates
+Exec=cachy-store
+Icon=system-software-install
+Terminal=false
+Categories=System;PackageManager;

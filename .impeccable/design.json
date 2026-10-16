@@ -1,0 +1,775 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-13T19:58:13.111341+00:00",
+  "title": "Design System: Cachy Store",
+  "extensions": {
+    "platform": "linux-desktop",
+    "mode": "operate",
+    "native": {
+      "toolkit": "Qt 6 Widgets + KDE Frameworks",
+      "fontFamily": "Desktop system font",
+      "fixedFont": "QFontDatabase::FixedFont",
+      "icons": "Desktop icon theme; Breeze fallback",
+      "paletteRoles": {
+        "sidebar": "Window",
+        "featured": "Button alpha 150",
+        "border": "Mid alpha 90",
+        "placeholderText": "Text in Active and Inactive groups; Disabled inherited",
+        "updatePanels": "WindowText alpha 14"
+      },
+      "sidebarWidth": 156,
+      "initialWindow": [
+        1180,
+        850
+      ],
+      "minimumWindow": [
+        720,
+        580
+      ],
+      "contentMargins": [
+        20,
+        16,
+        20,
+        24
+      ],
+      "motion": "Native controls; app gallery uses 300 ms OutCubic QVariantAnimation",
+      "selection": "Native QToolButton: Button hover, Midlight checked, Highlight focus border",
+      "trayPaint": {
+        "fillRole": "Button",
+        "fillAlpha": 150,
+        "edgeRole": "Mid",
+        "edgeAlpha": 90,
+        "edgeWidth": 1,
+        "antialiasing": true,
+        "inset": 0.5
+      },
+      "buttonMinimumHeight": 32,
+      "searchMinimumHeight": 38,
+      "sourceSelectorMinimumHeight": 32,
+      "collapsedSidebarWidth": 56,
+      "sidebarMargins": [
+        8,
+        16,
+        8,
+        8
+      ],
+      "sidebarToggleSize": [
+        40,
+        40
+      ],
+      "navigationIconSize": [
+        20,
+        20
+      ],
+      "sidebarBehavior": {
+        "expandedWidth": 156,
+        "collapsedWidth": 56,
+        "compactLabels": "Icon-only with accessible names and tooltips",
+        "currentPage": "Preserved on collapse and expansion",
+        "preferences": {
+          "storage": "QSettings",
+          "compactSidebar": "Persisted toggle state"
+        },
+        "activation": "Exclusive QButtonGroup with explicit stack switching on every click"
+      },
+      "sidebarDivider": {
+        "kind": "Native QFrame VLine",
+        "width": 1,
+        "expanded": true,
+        "compact": false
+      },
+      "sidebarSpacing": 16,
+      "shell": {
+        "rootBackground": "Window",
+        "sidebarAutoFill": false,
+        "contentTopFrame": false
+      },
+      "navigationGap": 8,
+      "updatesContentMargins": [
+        20,
+        16,
+        20,
+        24
+      ]
+    },
+    "breakpoints": [],
+    "shadows": [],
+    "motion": [
+      {
+        "name": "app-gallery",
+        "value": "300 ms OutCubic",
+        "purpose": "Animated circular screenshot selection."
+      }
+    ],
+    "reference": {
+      "path": "previews/quickpeek-reference.png",
+      "option": "Quickpeek screenshot and local source",
+      "authority": "User-pinned visual language; translated to store functions",
+      "shippingRasterAssets": true,
+      "conceptSeed": null,
+      "source": "/home/lasky/peek/quickpeek.py",
+      "generatedRasterAssets": false,
+      "assetProvenance": "assets/provenance.json and embedded PNG origins"
+    },
+    "review": {
+      "status": "Ship: Mosaic and file/update preview refinement; 13 captures inspected; documentation synchronized",
+      "htmlCssDetector": "Inapplicable to native Qt Widgets",
+      "validation": {
+        "build": "Passed",
+        "ctest": "4/4 passed",
+        "embeddedTerminalInput": "Harmless input check passed",
+        "realUpdateTransactions": "Not tested",
+        "liveInventoryDiagnostic": "Previous font-cleanup diagnostic remains outside this UI scope"
+      },
+      "captures": [
+        "refine-activity-compact.png",
+        "refine-activity-expanded.png",
+        "refine-file-details.png",
+        "refine-file-drop.png",
+        "refine-installed-compact.png",
+        "refine-installed-details.png",
+        "refine-installed-wide.png",
+        "refine-load-more.png",
+        "refine-mosaic-compact.png",
+        "refine-mosaic-wide.png",
+        "refine-source-compact.png",
+        "refine-source-wide.png",
+        "refine-update-password.png"
+      ]
+    },
+    "explore": {
+      "mode": "offline prototype",
+      "sampleCount": 18,
+      "liveSearch": false,
+      "installationConnected": false,
+      "margins": [
+        20,
+        16,
+        20,
+        24
+      ],
+      "sectionGap": 16,
+      "searchAndFiltersMinimumHeight": 38,
+      "categories": {
+        "columns": 3,
+        "gap": 10,
+        "minimumHeight": 58,
+        "iconSize": [
+          22,
+          22
+        ],
+        "iconTint": "White"
+      },
+      "masonry": {
+        "columns": "clamp(width / 185, 2, 5)",
+        "gap": 12,
+        "placement": "Filled discovery bands with 12 px gaps, alternating one- or two-column publisher-screenshot spotlights and paired smaller cards. Spotlight apps: Bottles, GIMP, Obsidian, OBS Studio; exclude top-carousel apps. Stable app choices, no empty cells.",
+        "height": "Band maximum of image-card minimum and paired wrapped-content minima",
+        "widthSpan": "Spotlight alternates one or two columns; two columns only when at least four fit",
+        "stable": "Per-app variation remains deterministic; resize recalculates geometry",
+        "spotlightApps": [
+          "com.usebottles.bottles",
+          "org.gimp.GIMP",
+          "md.obsidian.Obsidian",
+          "com.obsproject.Studio"
+        ]
+      },
+      "directory": "Always A\u2013Z independent of discovery sorting",
+      "hero": {
+        "apps": [
+          "Krita",
+          "Blender",
+          "Kdenlive"
+        ],
+        "copyWidthPercent": 46,
+        "washAlpha": 48,
+        "controls": "Clickable pagination bars only",
+        "activation": "Separate local AppDetailsPage",
+        "fade": {
+          "kind": "Radial surface wash plus continuous leading join",
+          "center": "Image leading edge, 12% of tile height above top",
+          "radiusImageWidthFactor": 1.15,
+          "opaqueStop": 0.28,
+          "joinImageWidthPercent": 32
+        },
+        "height": 246,
+        "narrowHeight": 220,
+        "narrowViewportThreshold": 650
+      },
+      "tileWashAlpha": 22,
+      "dot": {
+        "activeMark": [
+          80,
+          7
+        ],
+        "inactiveMark": [
+          24,
+          7
+        ],
+        "inactiveAlpha": 130,
+        "keyboardFocus": "Tab/Backtab outline; no mouse-focus outline",
+        "hoverPanel": false,
+        "activeWidget": [
+          84,
+          36
+        ],
+        "inactiveWidget": [
+          28,
+          36
+        ],
+        "radius": 3.5
+      },
+      "titleBadge": false,
+      "loadMore": {
+        "position": "Centered below A\u2013Z directory",
+        "minimumHeight": 32,
+        "fetches": false,
+        "click": "All apps loaded; disabled",
+        "reason": "All 18 fixtures already visible"
+      }
+    },
+    "appDetails": {
+      "reference": "https://flathub.org/en/apps/org.mozilla.firefox",
+      "adaptation": "Native KDE app header and publisher screenshot presentation",
+      "order": [
+        "Header and full description",
+        "Publisher screenshot gallery",
+        "Latest changelog",
+        "Permissions"
+      ],
+      "headerIconSize": [
+        96,
+        96
+      ],
+      "margins": [
+        28,
+        16,
+        28,
+        32
+      ],
+      "sectionGap": 24,
+      "screenshotMaxHeight": 420,
+      "permissions": "Cached installed-package snapshot with version caveat, or explicit unavailable state",
+      "navigation": "Back and Alt+Left restore existing Explore state",
+      "installConnected": false,
+      "descriptionLanguage": "Base English publisher metadata",
+      "descriptionLanguageCheck": "tools/refresh-descriptions.py --check (parser regression fixtures)",
+      "description": "Full base-language publisher paragraphs and list entries across the content column",
+      "gallery": {
+        "maximumPerApp": 4,
+        "totalScreenshots": 62,
+        "appCount": 18,
+        "layout": "Flat horizontal strip with equal image bounds and circular neighboring side peeks; no tilt or skew",
+        "height": "Half widget width clamped to 220\u2013420 px",
+        "inputs": [
+          "Pagination bars",
+          "Wheel and trackpad scroll page; no image navigation",
+          "Drag",
+          "Left/Right keys"
+        ],
+        "motion": "300 ms OutCubic QVariantAnimation",
+        "imageBounds": {
+          "widthFactor": 0.76,
+          "heightFactor": 0.96,
+          "aspectRatio": "Preserved"
+        },
+        "gap": 12,
+        "mouseFocusOutline": false,
+        "keyboardFocus": "Highlight underline"
+      },
+      "panels": {
+        "backgroundRole": "WindowText",
+        "alpha": 14,
+        "sections": [
+          "Latest changelog",
+          "Permissions"
+        ]
+      },
+      "contentWidth": "Viewport width minus 56 px; no maximum width",
+      "toolbar": {
+        "installMinimumHeight": 36,
+        "sourceMinimumHeight": 36,
+        "sources": [
+          "Flatpak",
+          "AUR"
+        ],
+        "availability": "Preview choice; not checked",
+        "actionStates": [
+          "Install",
+          "Installing\u2026",
+          "Open"
+        ],
+        "open": "Preview message; no application launched",
+        "popupMode": "QToolButton::MenuButtonPopup",
+        "mainClick": "showMenu",
+        "additionalSources": "Append a platform entry when detail binding requires it"
+      },
+      "changelog": "Latest stable cached publisher release: version, date, notes; unavailable fallback"
+    },
+    "appList": {
+      "surfaces": [
+        "Explore A\u2013Z directory",
+        "Installed"
+      ],
+      "background": "AlternateBase",
+      "panelInset": 14,
+      "rowMargins": [
+        8,
+        0,
+        8,
+        0
+      ],
+      "viewSpacing": 0,
+      "iconSize": [
+        40,
+        40
+      ],
+      "iconCopyGap": 12,
+      "copyGap": 5,
+      "minimumRowHeight": 56,
+      "rowHeight": "Wrapped native labels",
+      "metadataFontSize": "10pt",
+      "activation": "Whole row by mouse or keyboard",
+      "backendIdentity": "Exact displayedInstalled merged-inventory index in Qt::UserRole",
+      "installedOrdering": "A\u2013Z after search and source filtering",
+      "previewMode": "Labeled samples; offline details and simulated app actions",
+      "installedMetadata": "Source, remote, scope, version once beneath app name",
+      "directoryAction": "Right-side Install preview",
+      "installedActions": [
+        "Remove preview",
+        "Reinstall preview"
+      ],
+      "rowWidth": "Fixed to current viewport before height measurement, including outer-scrollbar and sidebar resizing",
+      "installedActivation": "Main Explore detail page for known and unknown apps; no management popup",
+      "unknownDetails": "Available metadata and icon or native fallback; unavailable publisher states"
+    },
+    "updates": {
+      "margins": [
+        20,
+        16,
+        20,
+        24
+      ],
+      "sectionGap": 16,
+      "panelPadding": 14,
+      "panelBackground": "WindowText alpha 14",
+      "resultsHeadingSize": "12pt",
+      "statuses": [
+        "Not checked",
+        "Checking\u2026",
+        "Check complete",
+        "Check failed"
+      ],
+      "output": {
+        "kind": "Read-only QPlainTextEdit",
+        "background": "Transparent",
+        "frame": false,
+        "minimumHeight": 220
+      },
+      "checkActions": "All three disabled during check; re-enabled on callback completion",
+      "catalogueRefresh": false,
+      "previewStates": [
+        "Labeled idle",
+        "Labeled checking",
+        "Labeled failed"
+      ],
+      "validationLimit": "UI previews do not validate live update transactions; no actual updates started",
+      "summaryPanel": false,
+      "resultsSizing": "Expands into remaining page height",
+      "actionPanel": {
+        "padding": 14,
+        "gap": 10,
+        "primary": "Update all",
+        "primaryMinimumHeight": 44,
+        "primaryFullWidth": true,
+        "defaultAction": true,
+        "secondary": [
+          "Check for updates",
+          "Review updates"
+        ],
+        "secondaryMinimumHeight": 32
+      },
+      "updateBehavior": "Update all and Review updates open modal sample-password preview; acceptance starts shared simulated progress only",
+      "checkCommand": "Read-only arch-update --list",
+      "previewProgress": {
+        "controls": "All three disabled while running",
+        "primary": "Updating\u2026",
+        "completion": "Complete \u00b7 no system changes"
+      },
+      "confirmation": {
+        "title": "Confirm updates",
+        "initialSize": [
+          420,
+          220
+        ],
+        "margins": [
+          20,
+          16,
+          20,
+          20
+        ],
+        "gap": 16,
+        "titleSize": "18pt",
+        "field": "Masked Sample password, minimum height 36 px",
+        "actions": [
+          "Cancel",
+          "Accept updates"
+        ],
+        "acceptEnabled": "Nonempty sample text",
+        "clearInput": "Acceptance and cancellation",
+        "realAuthorization": false,
+        "realUpdates": false
+      }
+    },
+    "previewOperations": {
+      "sharedState": "Per app across details, directory and Installed buttons",
+      "tickIntervalMs": 80,
+      "tickPercentagePoints": 4,
+      "persistence": "In-memory session only",
+      "packageChanges": false,
+      "applicationLaunch": false,
+      "states": {
+        "install": [
+          "Install",
+          "Installing\u2026",
+          "Open"
+        ],
+        "remove": [
+          "Remove",
+          "Removing\u2026",
+          "Removed"
+        ],
+        "reinstall": [
+          "Reinstall",
+          "Reinstalling\u2026",
+          "Reinstall"
+        ]
+      }
+    },
+    "activity": {
+      "surface": "Modeless QDialog",
+      "initialSize": [
+        800,
+        600
+      ],
+      "margins": [
+        20,
+        16,
+        20,
+        24
+      ],
+      "sectionGap": 16,
+      "headingRole": "activity-title",
+      "sidebarControl": {
+        "height": 48,
+        "iconSize": [
+          20,
+          20
+        ],
+        "busyArcRadius": 14,
+        "expanded": "Plain icon, Activity label, 3 px progress line; no arc",
+        "compact": "Icon and busy progress arc",
+        "focus": "Palette Highlight rounded outline",
+        "compactHeight": 40,
+        "compactFootprint": "40 px square matching sidebar toggle; centered icon and optional progress arc"
+      },
+      "history": {
+        "rowHeight": 76,
+        "rowMargins": [
+          14,
+          10,
+          14,
+          10
+        ],
+        "rowGap": 8,
+        "progressBarHeight": 4,
+        "style": "Native rounded AlternateBase rows",
+        "preview": "Action, state, percentage",
+        "realEnded": "Ended \u00b7 check command exit code; no assumed success"
+      },
+      "progress": {
+        "preview": "Simulated percentage",
+        "real": "Indeterminate; percentage unavailable"
+      },
+      "terminal": "Embedded KonsolePart capability; current UI connects the harmless terminal demo",
+      "popupClose": "Hides without stopping task",
+      "mainWindowClose": "Blocked while real package operation is active"
+    },
+    "installedFiles": {
+      "pickers": [
+        "Add AppImage",
+        "Add Flatpak"
+      ],
+      "dropSurface": "Entire Installed page",
+      "extensions": [
+        "AppImage",
+        "flatpak",
+        "flatpakref"
+      ],
+      "acceptance": "Local readable regular file; case-insensitive extension only, not format inspection",
+      "remoteUrls": false,
+      "extraConfirmation": false,
+      "deduplication": "Canonical file path",
+      "inventory": "Session-only filePreviews merged with backend inventory on every render",
+      "refreshPreservesRows": true,
+      "fileCopy": false,
+      "extraction": false,
+      "execution": false,
+      "installation": false
+    },
+    "descriptionDisclosure": {
+      "collapsedLines": 6,
+      "control": "Native Show more / Show less tool button",
+      "shortText": "Hide disclosure",
+      "content": "Preserve full publisher text; recalculate wrapping on resize; reset collapsed for each app"
+    },
+    "featuredMotion": {
+      "baseDurationMs": 420,
+      "easing": "OutBack, overshoot 0.65",
+      "effect": "Clipped horizontal slide",
+      "desktopPreference": "KDE/AnimationDurationFactor; zero switches instantly",
+      "interruption": "Retarget from visible snapshot; finish on hide or resize",
+      "autoplayMs": 5000,
+      "pause": "Card/pagination hover or keyboard focus; hidden or offscreen",
+      "resume": "Fresh five-second interval",
+      "indicator": "280 ms OutBack animated bar length; featured only",
+      "direction": "Index order: last-to-first rewinds, first-to-last moves toward end; autoplay rewinds at wrap"
+    },
+    "collapseMotion": {
+      "durationMs": 240,
+      "easing": "OutCubic",
+      "targets": [
+        "filters height",
+        "sidebar width",
+        "description height"
+      ],
+      "preference": "KDE animation factor; zero applies instantly"
+    },
+    "mosaicHover": {
+      "delayMs": 350,
+      "dismissDelayMs": 150,
+      "layout": "Grow from source rectangle over the same card; preserve all tile geometry",
+      "content": "Category, platform, summary, cached publisher introduction, first publisher screenshot",
+      "dismiss": "Delayed dissolve on leave; immediate on navigation, Escape, scrolling, resize, filtering",
+      "action": "Open original app detail page",
+      "expandMs": 220,
+      "width": "At least 320 px or source width plus 48 px, bounded by viewport",
+      "selection": "No hover/mouse outline; keyboard-only contained focus cue",
+      "fadeOutMs": 180,
+      "effect": "Single native opacity effect",
+      "reenter": "Cancel fade and restore opacity; preserve expanded card"
+    },
+    "wideDiscoveryCards": {
+      "minimumWidth": 340,
+      "textFraction": 0.54,
+      "content": "Publisher screenshot on right with surface fade; preserve spotlight candidates"
+    },
+    "detailNavigationFocus": "Focus page container on entry; Back is not automatically highlighted; preserve Tab and Alt+Left",
+    "galleryIndicatorMotion": {
+      "durationMs": 280,
+      "easing": "OutBack",
+      "implementation": "Shared CarouselDot spring; KDE animation factor"
+    },
+    "tileQuickInstall": {
+      "size": [
+        130,
+        36
+      ],
+      "featured": "Bottom-right, 24 px inset",
+      "hoverPreview": "Top-right, 14 px inset",
+      "behavior": "Shared preview Install \u2192 Installing\u2026 \u2192 Open; no detail navigation or package changes"
+    },
+    "detailChangelog": {
+      "data": "Latest stable cached Flathub release, base/English language",
+      "fields": [
+        "version",
+        "date",
+        "notes"
+      ],
+      "fallback": "Hide the changelog panel",
+      "padding": 24,
+      "spacing": 12
+    },
+    "detailButtonShape": {
+      "targets": [
+        "Back",
+        "Show more/less"
+      ],
+      "autoRaise": false,
+      "minimumHeight": 36
+    },
+    "previewBadges": "Removed from visible pages; simulation behavior preserved",
+    "navigationHistory": {
+      "inputs": [
+        "Mouse Back",
+        "Mouse Forward",
+        "Details Back",
+        "Alt+Left on details"
+      ],
+      "origin": "Preserve Explore or Installed section, scroll position, filters, and focus",
+      "forward": "Reopen visited app; new visit truncates forward history",
+      "inventory": "No reload on history restoration"
+    },
+    "fileDropOverlay": {
+      "scope": "central content",
+      "formats": [
+        "AppImage",
+        "Flatpak"
+      ],
+      "dismiss": [
+        "leave",
+        "drop",
+        "navigation"
+      ],
+      "installation": "simulated"
+    },
+    "activityClear": "Native Clear action removes completed history while preserving running operations and app action state",
+    "detailSections": {
+      "order": [
+        "Latest changelog",
+        "Add-ons",
+        "Permissions",
+        "Links"
+      ],
+      "addons": "Publisher AppStream extends relationships; row opens details, Install simulates installation",
+      "links": "Publisher HTTP(S) links and Flathub manifest; native browser opening"
+    },
+    "exploreCategories": {
+      "labels": [
+        "Audio & Video",
+        "Developer Tools",
+        "Education & Science",
+        "Games",
+        "Graphics & Photography",
+        "Networking",
+        "Productivity",
+        "System",
+        "Utilities"
+      ],
+      "source": "https://flathub.org/en",
+      "matching": "AppStream category IDs, including multiple memberships",
+      "default": "Filters collapsed"
+    },
+    "featuredHeight": {
+      "height": 246,
+      "narrowHeight": 220,
+      "narrowViewportThreshold": 650
+    },
+    "emptyDetailSections": "Hide empty changelog, add-on, permission, link, and screenshot sections with no placeholder or reserved space; restore populated sections on app changes",
+    "activityEmpty": {
+      "presentation": "Plain label; empty transparent list without placeholder card",
+      "disabledClearOpacity": 0.4,
+      "disabledClearCursor": "Arrow"
+    },
+    "featuredWheel": {
+      "scope": "Explore cards, Install, indicators",
+      "angleStep": 120,
+      "pixelStep": 60,
+      "autoplayFocus": "Keyboard pauses; mouse focus does not keep rotation paused"
+    }
+  },
+  "components": [
+    {
+      "name": "Native button",
+      "kind": "button",
+      "description": "QPushButton with themed icon and native states."
+    },
+    {
+      "name": "Persistent navigation",
+      "kind": "nav",
+      "refersTo": "navigation-item",
+      "description": "Exclusive native QToolButtons with neutral checked/hover surfaces, native theme icons, accessible labels, and explicit page switching."
+    },
+    {
+      "name": "Activity popup",
+      "kind": "custom",
+      "description": "Modeless history popup with simulated percentages, indeterminate real-operation progress, and interactive KonsolePart prompts. Closing hides without stopping the task."
+    },
+    {
+      "name": "Explore discovery tile",
+      "kind": "card",
+      "refersTo": "explore-tile",
+      "description": "Whole-click detail tile in fully filled bands; larger cards use real publisher screenshots for apps outside the top carousel."
+    },
+    {
+      "name": "Explore hero",
+      "kind": "card",
+      "refersTo": "explore-hero",
+      "description": "App name and short caption beside bundled publisher imagery with radial top fade and continuous leading join."
+    },
+    {
+      "name": "Carousel pagination bar",
+      "kind": "button",
+      "refersTo": "carousel-dot",
+      "description": "Keyboard-accessible rounded selector with short inactive and long Highlight active marks; no button panel."
+    },
+    {
+      "name": "Explore filters",
+      "kind": "custom",
+      "description": "Native search and Filters toggle with source, sort, and six category controls."
+    },
+    {
+      "name": "Prototype app details",
+      "kind": "custom",
+      "description": "Main detail page for Explore and Installed, preview Install, visible split source menu with platform entries, publisher metadata or unavailable fallback."
+    },
+    {
+      "name": "Detail panel",
+      "kind": "card",
+      "refersTo": "detail-panel",
+      "description": "Separate changelog or permission section with neutral WindowText alpha 14 surface."
+    },
+    {
+      "name": "Shared application list",
+      "kind": "custom",
+      "refersTo": "app-list",
+      "description": "Rounded background with 14 px outer inset and 8 px row inner margins; wrapping copy, right preview actions, and viewport-fitted widths."
+    },
+    {
+      "name": "Updates panels",
+      "kind": "card",
+      "description": "Expanding results with read-only update check; bottom Update all and Review updates open modal sample-password confirmation and simulate progress."
+    },
+    {
+      "name": "Sidebar Activity control",
+      "kind": "custom",
+      "refersTo": "activity-control",
+      "description": "Expanded plain icon and progress line; compact icon and busy arc. Native divider appears only expanded."
+    }
+  ],
+  "narrative": {
+    "northStar": "Native KDE software discovery",
+    "overview": "Use Quickpeek\u2019s native KDE visual language with persistent store navigation. Native Qt Widgets and KDE Frameworks provide the controls and embedded operation terminal. Inherit the desktop's font family, colors, icon theme, and control style.",
+    "keyCharacteristics": [
+      "Persistent navigation beside scrollable software discovery.",
+      "Bundled application icons and publisher screenshots in the offline Explore prototype.",
+      "Native dialogs and package-manager prompts inside one window."
+    ],
+    "rules": [
+      {
+        "name": "The Theme Inheritance Rule",
+        "body": "Resolve shell and text colors from QPalette and preserve system light and dark themes. Fixed category colors are limited to Explore category controls and tile washes.",
+        "section": "colors"
+      },
+      {
+        "name": "The System Font Rule",
+        "body": "Preserve the desktop family and native control typography when extending the app.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do inherit the desktop palette, font family, control style, and icons.",
+      "Do keep software sources explicit on operational Installed rows and prototype source controls.",
+      "Do use metadata-backed icons and publisher screenshots with recorded origins; label Explore as an offline sample prototype.",
+      "Do keep details and confirmations explicit before package operations.",
+      "Do preserve shared list insets and filled discovery bands with publisher-screenshot spotlights at narrow desktop sizes."
+    ],
+    "donts": [
+      "Don't invent ratings, safety badges, or publisher screenshots. AI-generated images are permitted only for design mockups, never as application assets.",
+      "Don't replace native controls with a web imitation or ship the structural reference as artwork.",
+      "Don't override the user's configured icon theme; Breeze is the fallback.",
+      "Don't describe AUR review or AppImage import as safety certification.",
+      "Don't treat a source-code correction as a completed visual review."
+    ]
+  }
+}
