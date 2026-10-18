@@ -348,6 +348,8 @@ void Backend::assemble() {
             app.releaseVersion = release->version();
             app.releaseDate = release->timestamp().date();
             app.releaseNotes = release->description();  // Markup; converted when shown
+            for (int i = 1; i < 8; ++i) if (const auto older = component.releasesPlain().indexSafe(i))
+                app.olderReleases.append({older->version(), older->timestamp().date(), older->description().left(4000)});
         }
         app.iconPath = cachedIconPath(component);
         app.screenshots = screenshotUrls(component, 4);
@@ -535,7 +537,10 @@ void Backend::prepareAur(const App &app, std::function<void(QString, QString, QS
     reviewedHashes.clear();
     const quint64 generation = ++reviewGeneration;
     if (!validPackageName(app.base)) { done({}, {}, "Invalid AUR package base."); return; }
-    auto temp = std::make_shared<QTemporaryDir>(QDir::tempPath() + "/woof-store-review-XXXXXX");
+    // Not /tmp: it is often a small RAM disk, and big packages (a browser) need gigabytes to download and build.
+    const QString buildRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/aur-build";
+    QDir().mkpath(buildRoot);
+    auto temp = std::make_shared<QTemporaryDir>(buildRoot + "/review-XXXXXX");
     if (!temp->isValid()) { done({}, {}, "Cannot create a review folder."); return; }
     review = temp;
     const QString checkout = temp->path() + "/package";

@@ -92,7 +92,7 @@ public:
         auto *navHost = new QWidget; navHost->setObjectName("navigation");
         auto *navLayout = new QVBoxLayout(navHost); navLayout->setContentsMargins(0, 0, 0, 0); navLayout->setSpacing(8);
         int id = 0;
-        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "view-grid"}, {"Installed", "view-list-details"}, {"Updates", "view-refresh"}}) {
+        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "compass"}, {"Installed", "view-list-details"}, {"Updates", "view-refresh"}}) {
             auto *item = new QToolButton;
             item->setObjectName("nav" + entry.first); item->setText(entry.first); item->setIcon(QIcon::fromTheme(entry.second));
             item->setIconSize(QSize(20, 20)); item->setFixedHeight(40); item->setCheckable(true);
@@ -163,7 +163,7 @@ public:
         activityLayout->addLayout(activityActions);
         connect(clear, &QPushButton::clicked, this, [this] {
             for (auto &entry : previewOperations.activities) if (entry.progress == 100) entry.cleared = true;
-            if (part && !packageActivityHistory.isEmpty()) packageActivityHistory = {packageActivityHistory.last()};
+            if (busy() && !packageActivityHistory.isEmpty()) packageActivityHistory = {packageActivityHistory.last()};
             else packageActivityHistory.clear();
             refreshActivity();
         });
@@ -244,7 +244,7 @@ public:
         if (!activityHistory) return;
         struct Record { QString name, state; int progress; bool unknown; };
         QList<Record> records;
-        for (const auto &entry : packageActivityHistory) records.append({entry, "Package operation", 0, bool(part) && entry == packageActivityHistory.last()});
+        for (const auto &entry : packageActivityHistory) records.append({entry, "Package operation", 0, busy() && entry == packageActivityHistory.last()});
         for (const auto &activity : previewOperations.activities) {
             if (activity.cleared) continue;
             const QString state = activity.failed ? "Failed" : activity.progress == 100 ? "Complete" : activity.real ? QString("Running") : QString::number(activity.progress) + "%";
@@ -273,13 +273,13 @@ public:
         terminalHost->setVisible(bool(part));
         const bool completed = std::any_of(previewOperations.activities.cbegin(), previewOperations.activities.cend(), [](const auto &entry) { return !entry.cleared && entry.progress == 100; });
         auto *clear = activityDialog->findChild<QPushButton *>("clearActivity");
-        const bool canClear = completed || packageActivityHistory.size() > (part ? 1 : 0);
+        const bool canClear = completed || packageActivityHistory.size() > (busy() ? 1 : 0);
         clear->setEnabled(canClear); clear->setCursor(canClear ? Qt::PointingHandCursor : Qt::ArrowCursor);
         static_cast<QGraphicsOpacityEffect *>(clear->graphicsEffect())->setOpacity(canClear ? 1. : .4);
-        if (!part) activityStatus->setText(previewOperations.running() ? "No package changes" : "Activity history");
-        activityButton->busy = bool(part) || previewOperations.running(); activityButton->indeterminate = bool(part);
+        if (!busy()) activityStatus->setText(previewOperations.running() ? "No package changes" : "Activity history");
+        activityButton->busy = busy() || previewOperations.running(); activityButton->indeterminate = busy();
         activityButton->progress = previewOperations.activities.isEmpty() ? 0 : previewOperations.progress();
-        activityButton->setToolTip(part ? "Package activity running · progress unavailable" : previewOperations.running() ? QString("Activity · %1%").arg(activityButton->progress) : "Show activity");
+        activityButton->setToolTip(busy() ? "Package activity running · progress unavailable" : previewOperations.running() ? QString("Activity · %1%").arg(activityButton->progress) : "Show activity");
         const auto *updates = previewOperations.latest("preview-system-updates");
         const bool updating = updates && updates->progress < 100;
         if (updating || previewUpdateRunning) {
@@ -334,7 +334,8 @@ public:
         dialog->show(); password->setFocus();
     }
 
-    bool startActivity(const QString &title, const QString &program, const QStringList &arguments = {}, const QString &cwd = {}) {
+    // closeOnSuccess: package operations close themselves when they succeed; a failure keeps the output until Enter.
+    bool startActivity(const QString &title, const QString &program, const QStringList &arguments = {}, const QString &cwd = {}, bool closeOnSuccess = false) {
         if (part) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return false; }
         const QString executable = QStandardPaths::findExecutable(program);
         if (executable.isEmpty()) { QMessageBox::warning(this, "Required program missing", "Install " + program + " and try again."); return false; }
@@ -361,7 +362,7 @@ public:
             backend.loadInstalled();
         });
         // Fixed wrapper; package names, paths and arguments are positional data, never shell code.
-        const QString wrapper = "cd -- \"$1\" || exit 1; shift; \"$@\"; code=$?; printf '\\nCommand exit code: %s\\nPress Enter to close this activity.' \"$code\"; IFS= read -r answer; exit \"$code\"";
+        const QString wrapper = QString("cd -- \"$1\" || exit 1; shift; \"$@\"; code=$?; ") + (closeOnSuccess ? "if [ \"$code\" -eq 0 ]; then printf '\\nDone.'; sleep 1; exit 0; fi; " : "") + "printf '\\nCommand exit code: %s\\nPress Enter to close this activity.' \"$code\"; IFS= read -r answer; exit \"$code\"";
         // KonsolePart expects argv[0] in its argument list (unlike QProcess).
         QStringList args = {"/usr/bin/bash", "-c", wrapper, "woof-store-activity", cwd.isEmpty() ? QDir::homePath() : cwd, executable};
         args.append(arguments);
@@ -379,10 +380,13 @@ public:
         } else if (key.startsWith("aur:")) { app->key = key; app->name = key.mid(4); app->packages = {{Source::Aur, key.mid(4), "aur", {}, 0}}; }
         else return false;
         if (app->packages.isEmpty()) return false;
+        // A Flatpak needs a full application ID (org.kde.krita); a bare word would make flatpak ask which of many refs is meant.
+        static const QRegularExpression appId("^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+$");
+        auto usable = [](const Package &candidate) { return candidate.source != Source::Flatpak || appId.match(candidate.name).hasMatch(); };
         if (appDetails->currentId == key)
-            for (const auto &candidate : app->packages) if (AppDetailsPage::packageLabel(candidate) == appDetails->sourceButton->text()) { *package = candidate; return true; }
+            for (const auto &candidate : app->packages) if (usable(candidate) && AppDetailsPage::packageLabel(candidate) == appDetails->sourceButton->text()) { *package = candidate; return true; }
         for (Source wanted : {Source::Repo, Source::Flatpak, Source::Aur})
-            for (const auto &candidate : app->packages) if (candidate.source == wanted) { *package = candidate; return true; }
+            for (const auto &candidate : app->packages) if (candidate.source == wanted && usable(candidate)) { *package = candidate; return true; }
         return false;
     }
     const App *installedRow(const QString &id) const {
@@ -404,18 +408,62 @@ public:
         if (launcher.isEmpty() || QStandardPaths::findExecutable("gio").isEmpty()) { statusBar()->showMessage(name + " · no launcher found", 4000); return; }
         QProcess::startDetached("gio", {"launch", launcher});
     }
+    // Runs a package operation without a terminal. Passwords come from the system: polkit for pkexec, a GUI askpass for sudo.
+    bool startJob(const QString &title, const QString &program, const QStringList &arguments, const QString &cwd = {}, const QStringList &stepNames = {}, const std::function<int(const QString &)> &stepOf = {}) {
+        if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return false; }
+        const QString executable = QStandardPaths::findExecutable(program);
+        if (executable.isEmpty()) { QMessageBox::warning(this, "Required program missing", "Install " + program + " and try again."); return false; }
+        // sudo has no terminal here, so it asks through this helper instead.
+        const QString askpass = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/askpass.sh";
+        QDir().mkpath(QFileInfo(askpass).absolutePath());
+        QFile helper(askpass);
+        if (helper.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            helper.write("#!/bin/sh\nif command -v kdialog >/dev/null; then exec kdialog --title WoofStore --password \"${1:-Password}\"; fi\nexec zenity --password --title=WoofStore\n");
+            helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        }
+        auto *process = new QProcess(this);
+        job = process;
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("SUDO_ASKPASS", askpass); environment.insert("LC_ALL", "C.UTF-8");
+        process->setProcessEnvironment(environment);
+        if (!cwd.isEmpty()) process->setWorkingDirectory(cwd);
+        auto *dialog = new JobDialog(title, stepNames, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+        jobDialog = dialog;
+        packageActivityHistory.append(title + " · Running · progress unavailable");
+        refreshActivity(); statusBar()->showMessage(title + " — running");
+        connect(process, &QProcess::readyRead, this, [process, dialog, stepOf] {
+            const QString text = QString::fromUtf8(process->readAll());
+            dialog->feed(text);
+            if (stepOf) dialog->advanceTo(stepOf(text));
+        });
+        connect(process, &QProcess::finished, this, [this, process, dialog, title](int code, QProcess::ExitStatus status) {
+            const bool ok = status == QProcess::NormalExit && code == 0;
+            job = nullptr; process->deleteLater();
+            if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
+            dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
+            if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show();
+            statusBar()->showMessage(title + (ok ? " — done" : " — failed"), 6000);
+            refreshActivity();
+            if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
+        });
+        // setsid: no controlling terminal, so sudo uses the askpass dialog; -w keeps the exit code.
+        process->start("setsid", QStringList{"-w", executable} + arguments);
+        dialog->show();
+        return true;
+    }
     // Starts the real operation for a button. false = not a catalogue app, the caller keeps the simulation.
     bool runOperation(const QString &key, const QString &name, const QString &action) {
         CatalogApp app; Package package;
         if (!resolveOperation(key, &app, &package)) return false;
-        if (part) { startActivity(name, "true"); return true; }  // Shows the "operation already running" notice
+        if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return true; }
         if (action == "Remove") { removeApp(key, name, app); return true; }
         const bool again = action == "Reinstall";
         if (package.source == Source::Flatpak) {
-            QStringList arguments{"install"}; if (again) arguments << "--reinstall";
-            if (startActivity((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{package.repo, package.name})) beginPending(key, name, action, package);
+            QStringList arguments{"install", "--system", "-y", "--noninteractive"}; if (again) arguments << "--reinstall";
+            if (startJob((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{package.repo, package.name})) beginPending(key, name, action, package);
         } else if (package.source == Source::Repo) {
-            if (startActivity((again ? "Reinstall " : "Install ") + name, "sudo", QStringList{"pacman", "-S"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name})) beginPending(key, name, action, package);
+            if (startJob((again ? "Reinstall " : "Install ") + name, "pkexec", QStringList{"pacman", "-S", "--noconfirm"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name})) beginPending(key, name, action, package);
         } else installAur(key, name, action, package);
         return true;
     }
@@ -424,7 +472,7 @@ public:
         previewOperations.begin(key, name, action);
     }
     void settleOperation() {
-        if (!settling || part || !pendingOp.active) return;
+        if (!settling || busy() || !pendingOp.active) return;
         settling = false; pendingOp.active = false;
         const bool installed = backend.installedPackage(pendingOp.package);
         const bool ok = installed == (pendingOp.action != "Remove");
@@ -459,8 +507,9 @@ public:
                     // pkgctl builds in a clean chroot; only the exact built package is installed, as root.
                     const QString script = "pkgctl build || exit; found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; "
                         "[ \"$(pacman -Qpq \"$f\")\" = \"$1\" ] && found=$f; done; [ -n \"$found\" ] || { echo \"No built package named $1\"; exit 1; }; "
-                        "pacman -Qip \"$found\"; sudo pacman -U $2 \"$found\"";
-                    if (startActivity("Build and install " + name, "bash", {"-c", script, "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed"}, backend.reviewPath())) beginPending(key, name, action, package);
+                        "found=$(realpath \"$found\"); echo \"==> Installing package\"; pkexec pacman -U --noconfirm $2 \"$found\"";
+                    if (startJob("Install " + name + " from the AUR", "bash", {"-c", script, "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed"}, backend.reviewPath(),
+                        {"Prepare", "Download", "Build", "Install"}, [](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; })) beginPending(key, name, action, package);
                 };
                 dialog->showReview(info, recipe, previous);
                 dialog->open();
@@ -480,9 +529,9 @@ public:
         if (dialog.exec() != QDialog::Accepted) return;
         bool started;
         if (flatpak) {
-            const QString script = dialog.options[0]->isChecked() ? "flatpak uninstall \"$1\" && flatpak uninstall --unused" : "flatpak uninstall \"$1\"";
-            started = startActivity("Remove " + name, "bash", {"-c", script, "woof-store-remove", package.name});
-        } else started = startActivity("Remove " + name, "sudo", {"pacman", dialog.options[0]->isChecked() ? "-Rns" : "-Rn", package.name});
+            const QString script = dialog.options[0]->isChecked() ? "flatpak uninstall -y --noninteractive \"$1\" && flatpak uninstall -y --noninteractive --unused" : "flatpak uninstall -y --noninteractive \"$1\"";
+            started = startJob("Remove " + name, "bash", {"-c", script, "woof-store-remove", package.name});
+        } else started = startJob("Remove " + name, "pkexec", {"pacman", dialog.options[0]->isChecked() ? "-Rns" : "-Rn", "--noconfirm", package.name});
         if (!started) return;
         beginPending(key, name, "Remove", package);
         pendingOp.leftovers = dialog.chosenPaths();
@@ -492,7 +541,7 @@ protected:
     // The compositor owns the window edge; omit the themed content-top frame.
     void paintEvent(QPaintEvent *) override {}
     void closeEvent(QCloseEvent *event) override {
-        if (part) {
+        if (busy()) {
             showActivity();
             QMessageBox::information(this, "Package operation active", "Finish the activity before closing the store. Interrupting a package transaction can leave your system partly updated.");
             event->ignore();
@@ -569,6 +618,17 @@ private:
                 event->accept(); return true;
             }
         }
+        // Typing anywhere on Explore starts a search, so the first letters are not lost.
+        if (event->type() == QEvent::KeyPress && widget && widget->window() == this && pages->currentWidget() == explore && !QApplication::activeModalWidget()) {
+            auto *key = static_cast<QKeyEvent *>(event);
+            const QString typed = key->text();
+            auto *focused = QApplication::focusWidget();
+            const bool editing = qobject_cast<QLineEdit *>(focused) || qobject_cast<QAbstractSpinBox *>(focused) || qobject_cast<QComboBox *>(focused) || qobject_cast<QTextEdit *>(focused) || qobject_cast<QPlainTextEdit *>(focused);
+            if (!editing && !typed.isEmpty() && typed[0].isPrint() && !typed[0].isSpace() && !(key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+                explore->search->setFocus(); explore->search->setText(explore->search->text() + typed);
+                return true;
+            }
+        }
         return QMainWindow::eventFilter(object, event);
     }
     QLineEdit *installedSearch = nullptr;
@@ -585,6 +645,9 @@ private:
     QLabel *updateStatus = nullptr;
     QPushButton *checkUpdates = nullptr;
     QPointer<KParts::ReadOnlyPart> part;
+    QPointer<QProcess> job;  // A package operation running in the background, shown by jobDialog
+    QPointer<JobDialog> jobDialog;
+    bool busy() const { return part || job; }
     QHash<QString, int> appIndex;  // CatalogApp::key to index in backend.apps
     struct PendingOperation { QString key, name, action; Package package; bool active = false; QStringList leftovers; } pendingOp;
     bool settling = false;
@@ -688,7 +751,7 @@ private:
         auto *actionsRow = new QHBoxLayout; actionsRow->addWidget(checkUpdates); actionsRow->addWidget(update);
         actionsLayout->addWidget(updateAll); actionsLayout->addLayout(actionsRow); content->addWidget(actions);
         connect(checkUpdates, &QPushButton::clicked, this, [this, update] {
-            if (part) { showActivity(); return; }
+            if (busy()) { showActivity(); return; }
             checkUpdates->setEnabled(false); update->setEnabled(false); updateAll->setEnabled(false);
             updateStatus->setText("Checking…");
             updateList->setPlainText("Checking system, AUR, and Flatpak updates…");
@@ -1096,10 +1159,10 @@ int main(int argc, char **argv) {
         page->search->setText("firefox"); page->applyFilters(); QApplication::processEvents(); passed &= !autoplay->isActive();
         page->search->clear(); page->applyFilters(); QApplication::processEvents(); passed &= autoplay->isActive();
         // The fixture page is short: a small window makes the carousel scroll out of view.
-        const QSize fullSize = store.size(); store.resize(fullSize.width(), 360); QApplication::processEvents();
+        const QSize fullSize = store.size(); const QSize minimum = store.minimumSize(); store.setMinimumHeight(200); store.resize(fullSize.width(), 240); QApplication::processEvents();
         page->showDirectory(); QApplication::processEvents(); passed &= !autoplay->isActive();
         page->verticalScrollBar()->setValue(0); QApplication::processEvents(); passed &= autoplay->isActive();
-        store.resize(fullSize); QApplication::processEvents();
+        store.setMinimumSize(minimum); store.resize(fullSize); QApplication::processEvents();
         // GIMP: the featured install above already finished Krita, so Krita's quick button reads "Open".
         auto *tile = page->sections.first().masonry->tiles[0]; page->ensureWidgetVisible(tile); QApplication::processEvents();
         QList<QRect> mosaicGeometry; for (auto *card : page->sectionTiles()) mosaicGeometry.append(card->geometry());
@@ -1209,6 +1272,7 @@ int main(int argc, char **argv) {
                     passed &= page->isVisible() && nav->checkedId() == 0 && page->results->count() == 3
                         && page->sections.first().masonry->height() > 1 && page->search->isVisible();
                     for (const auto &section : page->sections) {
+                        if (section.masonry->isHidden()) continue;  // Other Flathub tabs
                         const auto tiles = section.masonry->tiles;
                         QRegion uncovered(section.masonry->rect());
                         for (int i = 0; i < tiles.size(); ++i) {
@@ -1233,6 +1297,20 @@ int main(int argc, char **argv) {
         passed &= page->isVisible();
         page->openPreview(fixtureApp(store.backend, "Krita"));
         store.selectPage(0); settle();
+        {   // A background job reports steps and output without a terminal
+            store.startJob("Job test", "bash", {"-c", "echo '==> Making package'; echo 'Installing 50%'; exit 0"}, {}, {"A", "B", "C"}, [](const QString &text) { return text.contains("Making package") ? 2 : 0; });
+            auto *jobView = static_cast<JobDialog *>(store.findChild<QDialog *>("jobDialog"));
+            QElapsedTimer waited; waited.start();
+            while (jobView && jobView->close->text() != "Close" && waited.elapsed() < 10000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+            passed &= jobView && jobView->close->text() == "Close" && jobView->log->toPlainText().contains("Making package") && jobView->step == 3 && jobView->bar->value() == 100;
+        }
+        {   // Typing on Explore goes to the search box
+            page->search->clear(); QKeyEvent typed(QEvent::KeyPress, Qt::Key_K, Qt::NoModifier, "k");
+            QApplication::sendEvent(page->viewport(), &typed);
+            QKeyEvent shortcut(QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier, "k");
+            QApplication::sendEvent(page->viewport(), &shortcut);
+            passed &= page->search->text() == "k"; page->search->clear();
+        }
         passed &= page->isVisible();
         store.previewInstalled(); settle();
         auto *installed = static_cast<AppList *>(store.findChild<QListWidget *>("installedApps"));

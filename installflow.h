@@ -6,6 +6,7 @@
 #include <QFontDatabase>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QRegularExpression>
 #include <QProcess>
 #include <QPushButton>
 #include <QTemporaryFile>
@@ -111,5 +112,62 @@ public:
         QStringList paths;
         for (int i = 0; i < leftoverBoxes.size(); ++i) if (leftoverBoxes[i]->isChecked()) paths << leftovers[i].path;
         return paths;
+    }
+};
+
+#include <QProgressBar>
+#include <QToolButton>
+// Progress of a package operation without a terminal: steps, one status line, and the raw output on request.
+class JobDialog : public QDialog {
+public:
+    QLabel *steps = nullptr, *phase = nullptr;
+    QProgressBar *bar = nullptr;
+    QPlainTextEdit *log = nullptr;
+    QPushButton *close = nullptr;
+    QToolButton *details = nullptr;
+    QStringList stepNames; int step = 0;
+
+    explicit JobDialog(const QString &title, const QStringList &names = {}, QWidget *parent = nullptr) : QDialog(parent), stepNames(names) {
+        setObjectName("jobDialog"); setWindowTitle(title); setMinimumWidth(560);
+        auto *layout = new QVBoxLayout(this); layout->setSpacing(12);
+        auto *heading = new QLabel(title); QFont font = heading->font(); font.setPointSize(font.pointSize() + 4); font.setBold(true); heading->setFont(font);
+        steps = new QLabel; steps->setTextFormat(Qt::RichText); steps->setVisible(!names.isEmpty());
+        bar = new QProgressBar; bar->setRange(0, 0); bar->setTextVisible(false); bar->setFixedHeight(8);
+        phase = new QLabel("Starting…"); phase->setWordWrap(true); phase->setTextFormat(Qt::PlainText);
+        details = new QToolButton; details->setText("Show details"); details->setCheckable(true); details->setAutoRaise(true); details->setArrowType(Qt::RightArrow); details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        log = new QPlainTextEdit; log->setReadOnly(true); log->setMaximumBlockCount(5000); log->setMinimumHeight(220); log->hide();
+        log->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); log->setLineWrapMode(QPlainTextEdit::NoWrap);
+        close = new QPushButton("Hide"); close->setToolTip("The operation keeps running; progress stays in Activity");
+        auto *buttons = new QHBoxLayout; buttons->addWidget(details); buttons->addStretch(); buttons->addWidget(close);
+        for (QWidget *w : {static_cast<QWidget *>(heading), static_cast<QWidget *>(steps), static_cast<QWidget *>(bar), static_cast<QWidget *>(phase)}) layout->addWidget(w);
+        layout->addWidget(log, 1); layout->addLayout(buttons);
+        connect(details, &QToolButton::toggled, this, [this](bool open) { log->setVisible(open); details->setText(open ? "Hide details" : "Show details"); details->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); adjustSize(); });
+        connect(close, &QPushButton::clicked, this, &QDialog::hide);
+        showStep(0);
+    }
+    void showStep(int index) {
+        step = qBound(0, index, int(stepNames.size()));
+        QStringList parts;
+        for (int i = 0; i < stepNames.size(); ++i) parts << (i < step ? "✓ " : i == step ? "● " : "○ ") + stepNames[i];
+        steps->setText(parts.join("&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;"));
+    }
+    void advanceTo(int index) { if (index > step) showStep(index); }
+    // Output arrives in chunks; keep colors and progress-bar redraws out of the log.
+    void feed(const QString &chunk) {
+        static const QRegularExpression ansi("\\x1b\\[[0-9;?]*[A-Za-z]");
+        for (QString line : QString(chunk).remove(ansi).split(QRegularExpression("[\\n\\r]"), Qt::SkipEmptyParts)) {
+            line = line.trimmed(); if (line.isEmpty()) continue;
+            log->appendPlainText(line);
+            const auto percent = QRegularExpression("(\\d{1,3})%").match(line);
+            if (percent.hasMatch() && percent.captured(1).toInt() <= 100) { bar->setRange(0, 100); bar->setValue(percent.captured(1).toInt()); }
+            else if (bar->maximum() != 0 && !line.contains('%')) { /* keep the last percentage */ }
+            phase->setText(line.startsWith("==>") ? line.mid(3).trimmed() : line.startsWith("->") ? line.mid(2).trimmed() : line);
+        }
+    }
+    void finish(bool ok, const QString &message) {
+        bar->setRange(0, 100); bar->setValue(ok ? 100 : 0);
+        if (ok) showStep(stepNames.size());
+        phase->setText(message); close->setText("Close"); close->setToolTip({});
+        if (!ok) details->setChecked(true);
     }
 };

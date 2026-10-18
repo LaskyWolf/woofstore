@@ -33,19 +33,25 @@ protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this); painter.setRenderHint(QPainter::SmoothPixmapTransform); painter.setRenderHint(QPainter::Antialiasing);
         if (images.isEmpty()) return;
-        QList<int> order;
-        if (images.size() == 1) order.append(0);
-        else for (int i = int(std::floor(position)) - 2; i <= int(std::floor(position)) + 2; ++i) order.append(i);
+        const int count = images.size();
+        const QSizeF bounds(width() * .76, height() * .96);
+        auto wrapped = [count](int i) { return (i % count + count) % count; };
+        auto sizeOf = [&](int i) { return QSizeF(images[wrapped(i)].size()).scaled(bounds, Qt::KeepAspectRatio); };
+        // Neighbors sit one gap away from the image's real edge, so small or wide images still show a peek of the next one.
+        auto step = [&](int i) { return (sizeOf(i).width() + sizeOf(i + 1).width()) / 2 + 12; };
+        const int base = int(std::floor(position));
+        QMap<int, qreal> centers;
+        centers[base] = width() / 2. - (position - base) * step(base);
+        for (int i = base + 1; i <= base + 2; ++i) centers[i] = centers[i - 1] + step(i - 1);
+        for (int i = base - 1; i >= base - 2; --i) centers[i] = centers[i + 1] - step(i);
+        QList<int> order = count == 1 ? QList<int>{0} : QList<int>{base - 2, base - 1, base, base + 1, base + 2};
         std::sort(order.begin(), order.end(), [this](int a, int b) { return qAbs(a - position) > qAbs(b - position); });
         for (int i : order) {
-            const qreal delta = i - position;
-            if (qAbs(delta) > 1.8) continue;
-            const QSizeF bounds(width() * .76, height() * .96);
-            const QPixmap &image = images[(i % images.size() + images.size()) % images.size()];
-            const QSizeF size = QSizeF(image.size()).scaled(bounds, Qt::KeepAspectRatio);
-            const qreal x = width() / 2. + delta * (width() * .76 + 12), y = height() / 2.;
+            const QSizeF size = sizeOf(i);
+            const qreal x = count == 1 ? width() / 2. : centers[i], y = height() / 2.;
             const QRectF target(x - size.width() / 2, y - size.height() / 2, size.width(), size.height());
-            painter.drawPixmap(target.toRect(), image);
+            if (target.right() < 0 || target.left() > width()) continue;
+            painter.drawPixmap(target.toRect(), images[wrapped(i)]);
         }
         if (hasFocus() && keyboardFocus) {
             painter.setPen(QPen(palette().color(QPalette::Highlight), 2));
@@ -90,6 +96,57 @@ protected:
     }
 };
 
+// Average, and how many reviews gave each star count. Hover a row to read its numbers; bars grow in once.
+class RatingBars : public QWidget {
+public:
+    explicit RatingBars(const Ratings &value, QWidget *parent = nullptr) : QWidget(parent), ratings(value) {
+        setObjectName("ratingBars"); setMouseTracking(true); setFixedHeight(5 * 26 + 8); setMinimumWidth(360);
+        setAccessibleName(QString("%1 out of 5 stars from %2 reviews").arg(value.stars, 0, 'f', 1).arg(value.reviews));
+        const int duration = desktopAnimationDuration(450);
+        grow.setDuration(duration); grow.setStartValue(duration ? 0. : 1.); grow.setEndValue(1.); grow.setEasingCurve(QEasingCurve::OutCubic);
+        connect(&grow, &QVariantAnimation::valueChanged, this, [this] { update(); });
+        if (duration) grow.start();
+    }
+    int hoveredRow = -1;  // 0 = five stars
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const QColor ink = palette().color(QPalette::WindowText), accent = palette().color(QPalette::Highlight);
+        QFont big = font(); big.setPointSize(30); big.setBold(true); p.setFont(big); p.setPen(ink);
+        p.drawText(QRect(0, 0, 110, 56), Qt::AlignLeft | Qt::AlignVCenter, QString::number(ratings.stars, 'f', 1));
+        const int whole = qRound(ratings.stars);
+        p.setFont(font()); p.setPen(accent);
+        p.drawText(QRect(0, 56, 110, 24), Qt::AlignLeft | Qt::AlignVCenter, QString("★").repeated(whole) + QString("☆").repeated(5 - whole));
+        p.setPen(ink); p.drawText(QRect(0, 80, 130, 24), Qt::AlignLeft | Qt::AlignVCenter, QString("%1 reviews").arg(QLocale().toString(ratings.reviews)));
+        int most = 1; for (int count : ratings.histogram) most = qMax(most, count);
+        for (int row = 0; row < 5; ++row) {
+            const int stars = 5 - row, count = ratings.histogram[stars - 1];
+            const QRect line = rowRect(row);
+            if (row == hoveredRow) { p.setPen(Qt::NoPen); QColor wash = accent; wash.setAlpha(36); p.setBrush(wash); p.drawRoundedRect(line.adjusted(-6, -2, 6, 2), 6, 6); }
+            p.setPen(ink); p.setBrush(Qt::NoBrush);
+            p.drawText(QRect(line.left(), line.top(), 30, line.height()), Qt::AlignVCenter, QString("%1 ★").arg(stars));
+            const QRect track(line.left() + 36, line.top() + 6, line.width() - 36 - 64, line.height() - 12);
+            p.setPen(Qt::NoPen); QColor rail = palette().color(QPalette::Mid); rail.setAlpha(90); p.setBrush(rail); p.drawRoundedRect(track, track.height() / 2., track.height() / 2.);
+            const int filled = int(track.width() * count / double(most) * grow.currentValue().toDouble());
+            if (filled > 0) { p.setBrush(row == hoveredRow ? accent.lighter(125) : accent); p.drawRoundedRect(QRect(track.left(), track.top(), qMax(filled, track.height()), track.height()), track.height() / 2., track.height() / 2.); }
+            p.setPen(ink); p.drawText(QRect(track.right() + 10, line.top(), 54, line.height()), Qt::AlignRight | Qt::AlignVCenter, QLocale().toString(count));
+        }
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        int row = -1;
+        for (int i = 0; i < 5; ++i) if (rowRect(i).adjusted(-6, -2, 6, 2).contains(event->position().toPoint())) row = i;
+        if (row != hoveredRow) { hoveredRow = row; update(); }
+        if (row < 0) { QToolTip::hideText(); return; }
+        const int count = ratings.histogram[4 - row];
+        setToolTip(QString("%1 reviews gave %2 stars · %3 %").arg(QLocale().toString(count)).arg(5 - row).arg(ratings.reviews ? 100. * count / ratings.reviews : 0., 0, 'f', 0));
+    }
+    void leaveEvent(QEvent *) override { hoveredRow = -1; update(); }
+private:
+    Ratings ratings;
+    QVariantAnimation grow;
+    QRect rowRect(int row) const { return QRect(150, 4 + row * 26, width() - 150, 22); }
+};
+
 class AppDetailsPage : public QScrollArea {
 public:
     std::function<void()> onBack;
@@ -111,10 +168,10 @@ public:
         back = new QToolButton; back->setObjectName("detailsBack"); back->setAutoRaise(false); back->setMinimumHeight(36);
         back->setIcon(QIcon::fromTheme("go-previous")); back->setText("Explore"); back->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         back->setAccessibleName("Back to Explore"); back->setToolTip("Back to Explore (Alt+Left)");
-        auto *toolbar = new QHBoxLayout; toolbar->addWidget(back); toolbar->addStretch();
-        install = new QPushButton("Install"); install->setObjectName("previewInstall"); install->setMinimumHeight(36); toolbar->addWidget(install);
-        removeButton = new QPushButton("Remove"); removeButton->setObjectName("detailsRemove"); removeButton->setMinimumHeight(36); removeButton->setIcon(QIcon::fromTheme("edit-delete")); removeButton->hide(); toolbar->addWidget(removeButton);
-        sourceButton = new QToolButton; sourceButton->setObjectName("previewSource"); sourceButton->setText("Flatpak"); sourceButton->setMinimumHeight(36);
+        auto *toolbar = new QHBoxLayout; toolbar->setSpacing(10); toolbar->addWidget(back); toolbar->addStretch();
+        install = new QPushButton("Install"); install->setObjectName("previewInstall"); install->setFixedHeight(36); install->setMinimumWidth(112); toolbar->addWidget(install);
+        removeButton = new QPushButton("Remove"); removeButton->setObjectName("detailsRemove"); removeButton->setFixedHeight(36); removeButton->setMinimumWidth(112); removeButton->setIcon(QIcon::fromTheme("edit-delete")); removeButton->hide(); toolbar->addWidget(removeButton);
+        sourceButton = new QToolButton; sourceButton->setObjectName("previewSource"); sourceButton->setText("Flatpak"); sourceButton->setFixedHeight(36);
         sourceButton->setPopupMode(QToolButton::MenuButtonPopup); sourceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         connect(sourceButton, &QToolButton::clicked, sourceButton, &QToolButton::showMenu);
         sourceButton->setIcon(QIcon::fromTheme("package-x-generic")); sourceButton->setAccessibleName("Choose source");
@@ -149,7 +206,11 @@ public:
         changelogLayout->addWidget(text("Latest changelog", 16, true));
         releaseVersion = text("", 0, true); releaseVersion->setObjectName("releaseVersion"); changelogLayout->addWidget(releaseVersion);
         changelog = text(""); changelog->setObjectName("releaseNotes"); changelog->setTextInteractionFlags(Qt::TextSelectableByMouse); changelogLayout->addWidget(changelog);
+        olderLayout = new QVBoxLayout; olderLayout->setSpacing(4); changelogLayout->addLayout(olderLayout);
         column->addWidget(changelogPanel);
+        ratingsPanel = new DetailPanel; ratingsPanel->setObjectName("ratingsPanel"); ratingsPanel->hide();
+        ratingsLayout = new QVBoxLayout(ratingsPanel); ratingsLayout->setContentsMargins(24, 24, 24, 24); ratingsLayout->setSpacing(8);
+        column->addWidget(ratingsPanel);
         auto *addonPanel = new DetailPanel; addonPanel->setObjectName("addonPanel");
         addonLayout = new QVBoxLayout(addonPanel); addonLayout->setContentsMargins(24, 24, 24, 24); addonLayout->setSpacing(12);
         column->addWidget(addonPanel);
@@ -159,9 +220,6 @@ public:
         permissionNote = text(""); panelLayout->addWidget(permissionNote);
         permissionBody = new QWidget; permissionLayout = new QVBoxLayout(permissionBody); permissionLayout->setContentsMargins(0, 0, 0, 0); permissionLayout->setSpacing(18);
         panelLayout->addWidget(permissionBody); column->addWidget(permissionPanel);
-        ratingsPanel = new DetailPanel; ratingsPanel->setObjectName("ratingsPanel"); ratingsPanel->hide();
-        ratingsLayout = new QVBoxLayout(ratingsPanel); ratingsLayout->setContentsMargins(24, 24, 24, 24); ratingsLayout->setSpacing(8);
-        column->addWidget(ratingsPanel);
         auto *linksPanel = new DetailPanel; linksPanel->setObjectName("linksPanel");
         linksLayout = new QVBoxLayout(linksPanel); linksLayout->setContentsMargins(24, 24, 24, 24); linksLayout->setSpacing(12);
         column->addWidget(linksPanel);
@@ -226,6 +284,22 @@ public:
         releaseVersion->setText(version); releaseVersion->setVisible(!version.isEmpty());
         const QString notes = plainDescription(app.releaseNotes).trimmed();
         changelog->setText(notes); changelog->parentWidget()->setVisible(!notes.isEmpty());
+        while (auto *item = olderLayout->takeAt(0)) { delete item->widget(); delete item; }
+        for (const auto &older : app.olderReleases) {  // Older versions stay folded until asked for
+            const QString olderNotes = plainDescription(older.notes).trimmed();
+            if (olderNotes.isEmpty()) continue;
+            QString label = older.version;
+            if (older.date.isValid()) label += " · " + QLocale().toString(older.date, QLocale::ShortFormat);
+            auto *header = new QToolButton; header->setObjectName("olderRelease"); header->setCheckable(true); header->setAutoRaise(true);
+            header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); header->setArrowType(Qt::RightArrow); header->setText(label);
+            header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); header->setMinimumHeight(34); header->setCursor(Qt::PointingHandCursor);
+            header->setStyleSheet("QToolButton {text-align: left; border: none; border-radius: 6px; padding: 0 6px;} QToolButton:hover {background: palette(button);}");
+            header->setAccessibleName("Release " + label + " notes");
+            auto *body = text(olderNotes); body->setTextInteractionFlags(Qt::TextSelectableByMouse); body->hide();
+            body->setContentsMargins(24, 0, 0, 8);
+            connect(header, &QToolButton::toggled, body, [header, body](bool open) { body->setVisible(open); header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); });
+            olderLayout->addWidget(header); olderLayout->addWidget(body);
+        }
         while (auto *item = addonLayout->takeAt(0)) { delete item->widget(); delete item; }
         addonLayout->addWidget(text("Add-ons", 16, true));
         const auto addons = backend ? backend->addons(app) : QList<CatalogApp>();
@@ -357,15 +431,16 @@ private:
     void showRatings(const Ratings &ratings) {
         while (auto *item = ratingsLayout->takeAt(0)) { delete item->widget(); delete item; }
         QStringList lines;
+        bool hasBars = false;
         if (ratings.reviews > 0) {
-            const int whole = qRound(ratings.stars);
-            lines << QString("%1%2  %3 · %4 reviews (GNOME ODRS)").arg(QString("★").repeated(whole), QString("☆").repeated(5 - whole)).arg(ratings.stars, 0, 'f', 1).arg(ratings.reviews);
+            hasBars = true;
         }
         if (ratings.installs >= 0) lines << QString("%1 installs on Flathub · %2 last month").arg(QLocale().toString(ratings.installs), QLocale().toString(ratings.installsMonth));
         if (ratings.repoPercent >= 0) lines << QString("Installed on %1 % of Arch systems that share statistics (pkgstats)").arg(ratings.repoPercent, 0, 'f', 1);
         if (ratings.aurVotes >= 0) lines << QString("%1 votes on the AUR · popularity %2").arg(ratings.aurVotes).arg(ratings.aurPopularity, 0, 'f', 2);
-        if (lines.isEmpty()) { ratingsPanel->hide(); return; }
+        if (lines.isEmpty() && !hasBars) { ratingsPanel->hide(); return; }
         ratingsLayout->addWidget(text("Ratings", 16, true));
+        if (hasBars) { ratingsLayout->addWidget(new RatingBars(ratings)); ratingsLayout->addWidget(text("Reviews from GNOME ODRS", 9)); }
         for (const auto &line : lines) ratingsLayout->addWidget(text(line));
         ratingsPanel->show();
     }
@@ -393,6 +468,7 @@ private:
     QLabel *icon = nullptr, *summary = nullptr, *description = nullptr, *noScreenshot = nullptr;
     QLabel *permissionsHeading = nullptr, *permissionNote = nullptr;
     QLabel *releaseVersion = nullptr, *changelog = nullptr;
+    QVBoxLayout *olderLayout = nullptr;
     QWidget *permissionBody = nullptr;
     QVBoxLayout *permissionLayout = nullptr;
     QVBoxLayout *addonLayout = nullptr, *linksLayout = nullptr;

@@ -38,6 +38,8 @@ struct CatalogApp {
     QString desktopId;    // Launcher file name, to open an installed app
     QString releaseVersion, releaseNotes;
     QDate releaseDate;
+    struct Release { QString version; QDate date; QString notes; };
+    QList<Release> olderReleases;  // After the latest, newest first; notes are markup
     MetadataOrigin origin = MetadataOrigin::None;
 };
 

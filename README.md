@@ -43,7 +43,7 @@ Restart the store after refreshing the catalogue.
 
 Use the top-left button to collapse or expand the sidebar. Compact mode keeps tooltips and keyboard navigation. The sidebar size is remembered. Settings is currently omitted; source filters remain on Explore.
 
-- **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and the sections Trending, Popular, New and Updated on Flathub, and Popular in Arch. Rankings refresh daily. The AUR has no equivalent lists in the store; its apps appear through search and the directory.
+- **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and one tabbed module with Trending, Popular, New and Updated on Flathub. Rankings refresh daily. The AUR has no equivalent lists in the store; its apps appear through search and the directory.
 - **Installed:** list Flatpaks, foreign Arch packages, and AppImages imported by this store. Foreign packages are labeled **AUR / local** because `pacman -Qm` does not prove AUR origin. Official repository packages are updated by Cachy-Update but are not listed here in this version.
 - **Updates:** check available updates and preview update acceptance. Update all and Review updates open a sample-password popup and simulate progress. These actions do not authorize or start real updates.
 - **Activity:** inspect simulated progress and history in a popup. The embedded-terminal demo also supports ordinary and hidden input. No package operation is started by the current file or update preview controls.
@@ -60,11 +60,11 @@ Update all and Review updates open Confirm updates. Enter sample text in the mas
 
 ## Installing and removing
 
-Install, Reinstall and Remove run the real package manager in the embedded terminal, one operation at a time. File drops and Update all stay simulated.
+Install, Reinstall and Remove run the real package manager in the background, one operation at a time, with a progress window (steps, one status line, "Show details" for the raw output). Passwords come from the system: polkit for `pkexec`, and a KDialog/Zenity prompt for the `sudo` that `pkgctl` uses. AUR builds happen under `~/.cache/WoofStore/aur-build`, not `/tmp`. File drops and Update all stay simulated.
 
-- **Flatpak:** `flatpak install <remote> <id>`.
-- **Repository:** `sudo pacman -S --needed <name>`.
-- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds with `pkgctl build` in a clean chroot (package `devtools`, `sudo pacman -S --needed devtools`) and installs only the built file with `sudo pacman -U`. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Build dependencies from the AUR are not resolved.
+- **Flatpak:** `flatpak install --system -y <remote> <id>`, no questions asked; the system asks for your password through polkit if needed.
+- **Repository:** `pkexec pacman -S --needed --noconfirm <name>`.
+- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds with `pkgctl build` in a clean chroot (package `devtools`, `sudo pacman -S --needed devtools`) and installs only the built file with `pkexec pacman -U`. The chroot setup asks for your sudo password in a system dialog. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Build dependencies from the AUR are not resolved.
 - **Remove:** a dialog asks what else to delete. Caches are pre-selected; settings and data (`~/.config`, `~/.local/share`, `~/.var/app`) are not. They are deleted only after the package was removed. Only folders whose name equals the app or package name are offered.
 - **Open:** Flatpaks start with `flatpak run`; other apps through their desktop file.
 

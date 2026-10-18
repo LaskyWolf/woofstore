@@ -1,4 +1,5 @@
 #pragma once
+#include <QTabBar>
 #include "applist.h"
 #include "backend.h"
 #include <QtWidgets>
@@ -47,6 +48,22 @@ public:
         setAccessibleName("Open " + app.name);
         setToolTip(app.name + " — " + app.summary);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setMouseTracking(true);
+    }
+    // The card's color comes from its icon: saturated pixels count most. Icons without color use the category color.
+    QColor tint() const {
+        if (tintCache.isValid()) return tintCache;
+        const QImage image = catalogIcon(app).pixmap(32, 32).toImage().convertToFormat(QImage::Format_ARGB32);
+        double r = 0, g = 0, b = 0, total = 0;
+        for (int y = 0; y < image.height(); ++y) for (int x = 0; x < image.width(); ++x) {
+            const QColor c = QColor::fromRgba(image.pixel(x, y));
+            const double weight = c.alphaF() * c.hsvSaturationF() * c.hsvSaturationF() * (.3 + c.valueF());
+            r += c.red() * weight; g += c.green() * weight; b += c.blue() * weight; total += weight;
+        }
+        QColor color = total > 3 ? QColor(int(r / total), int(g / total), int(b / total)) : categoryColor(group);
+        float h, sat, v; color.getHsvF(&h, &sat, &v);
+        tintCache = QColor::fromHsvF(h < 0 ? 0 : h, qBound(.5f, sat, .85f), qBound(.5f, v, .8f));  // Never washed out, never glaring
+        return tintCache;
     }
     void bindQuickInstall(PreviewOperations *operations) {
         if (!operations) return;
@@ -76,7 +93,7 @@ protected:
         QPainterPath shape; shape.addRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 10, 10);
         p.setClipPath(shape);
         p.fillRect(rect(), palette().color(QPalette::Button));
-        QColor wash = categoryColor(group); wash.setAlpha(hero ? 48 : 22); p.fillRect(rect(), wash);
+        QColor wash = tint(); wash.setAlpha(hero ? 70 : 85); p.fillRect(rect(), wash);
         const QIcon icon = catalogIcon(app);
         const QColor ink = palette().color(QPalette::WindowText);
         p.setPen(ink);
@@ -136,18 +153,31 @@ protected:
             p.setFont(font());
             p.drawText(QRect(14, top + 100, textWidth - 28, height() - top - 106), Qt::TextWordWrap, app.summary);
         }
+        if (hovered) {  // A soft light follows the pointer; the edge picks up the card color
+            QColor glow = tint().lighter(150); glow.setAlpha(80);
+            QRadialGradient light(pointer, qMax(width(), height()) * .6); light.setColorAt(0, glow); light.setColorAt(1, QColor(glow.red(), glow.green(), glow.blue(), 0));
+            p.fillRect(rect(), light);
+            p.setClipping(false); p.setBrush(Qt::NoBrush); QColor edge = tint().lighter(160); edge.setAlpha(isDown() ? 255 : 190);
+            p.setPen(QPen(edge, 1.5)); p.drawRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 10, 10);
+        }
         if (hasFocus() && keyboardFocus) {
             p.setClipping(false); p.setBrush(Qt::NoBrush);
             p.setPen(QPen(palette().color(QPalette::Highlight), 2));
             p.drawRoundedRect(QRectF(rect()).adjusted(2, 2, -2, -2), 10, 10);
         }
     }
+    void enterEvent(QEnterEvent *event) override { hovered = true; pointer = event->position(); QAbstractButton::enterEvent(event); update(); }
+    void leaveEvent(QEvent *event) override { hovered = false; QAbstractButton::leaveEvent(event); update(); }
+    void mouseMoveEvent(QMouseEvent *event) override { pointer = event->position(); QAbstractButton::mouseMoveEvent(event); if (hovered) update(); }
     void focusInEvent(QFocusEvent *event) override {
         keyboardFocus = event->reason() == Qt::TabFocusReason || event->reason() == Qt::BacktabFocusReason;
         QAbstractButton::focusInEvent(event); update();
     }
 private:
     QMetaObject::Connection installBinding;
+    mutable QColor tintCache;
+    bool hovered = false;
+    QPointF pointer;
     void placeQuickInstall() {
         if (quickInstall) quickInstall->move(qMax(14, width() - quickInstall->width() - (hero ? 24 : 14)), hero ? qMax(14, height() - quickInstall->height() - 24) : 14);
     }
@@ -317,7 +347,9 @@ public:
     QToolButton *filters = nullptr;
     QWidget *filterPanel = nullptr;
     struct Section { QLabel *heading = nullptr; ExploreMasonry *masonry = nullptr; };
-    QList<Section> sections;  // Trending, Popular, New and Updated on Flathub; Popular in Arch. Empty ones are hidden.
+    QTabBar *flathubTabs = nullptr;
+    bool browsing = false;
+    QList<Section> sections;  // Trending, Popular, New and Updated on Flathub. Empty ones are hidden.
     AppList *results = nullptr, *others = nullptr;
     PreviewOperations *operations = nullptr;
     QPushButton *loadMore = nullptr, *moreOthers = nullptr;
@@ -341,9 +373,20 @@ public:
         buildCarousel(layout);
         offlineNote = text("Offline: showing saved suggestions."); offlineNote->setObjectName("offlineNote"); offlineNote->hide();
         layout->addWidget(offlineNote);
-        for (const QString &title : {QString("Trending on Flathub"), QString("Popular on Flathub"), QString("New on Flathub"), QString("Updated on Flathub"), QString("Popular in Arch")}) {
-            Section section{text(title, 12, true), new ExploreMasonry};
-            section.masonry->setObjectName("exploreSection"); layout->addWidget(section.heading); layout->addWidget(section.masonry);
+        // The four Flathub lists share one heading and a tab bar; only the selected list is shown.
+        const QStringList titles{"On Flathub", "Popular on Flathub", "New on Flathub", "Updated on Flathub"};
+        for (int i = 0; i < titles.size(); ++i) {
+            Section section{text(titles[i], 12, true), new ExploreMasonry};
+            section.masonry->setObjectName("exploreSection"); layout->addWidget(section.heading);
+            if (i == 0) {
+                flathubTabs = new QTabBar; flathubTabs->setObjectName("flathubTabs"); flathubTabs->setExpanding(false); flathubTabs->setDrawBase(false);
+                flathubTabs->setAccessibleName("Flathub lists"); flathubTabs->setFocusPolicy(Qt::StrongFocus);
+                for (const QString &tab : {"Trending", "Popular", "New", "Updated"}) flathubTabs->addTab(tab);
+                QFont tabFont = flathubTabs->font(); tabFont.setPointSizeF(tabFont.pointSizeF() + 3); flathubTabs->setFont(tabFont);
+                layout->addWidget(flathubTabs, 0, Qt::AlignHCenter);
+                connect(flathubTabs, &QTabBar::currentChanged, this, [this] { updateSections(); });
+            }
+            layout->addWidget(section.masonry);
             sections.append(section);
         }
         buildHoverPreview();
@@ -396,11 +439,25 @@ public:
         updateAutoplay();
     }
     void openPreview(const CatalogApp &app) { if (onOpen) onOpen(app); }
+    void updateSections() {
+        const int current = flathubTabs->currentIndex();
+        bool anyFlathub = false;
+        for (int i = 0; i < sections.size(); ++i) {
+            const bool filled = !sections[i].masonry->tiles.isEmpty();
+            {
+                anyFlathub |= filled;
+                sections[i].masonry->setVisible(browsing && filled && i == current);
+                if (!sections[i].masonry->isHidden()) QTimer::singleShot(0, sections[i].masonry, [m = sections[i].masonry] { m->arrange(); });
+                if (i) sections[i].heading->hide();
+            }
+        }
+        sections[0].heading->setVisible(browsing && anyFlathub); flathubTabs->setVisible(browsing && anyFlathub);
+    }
     void showCollection() { verticalScrollBar()->setValue(sections.first().heading->mapTo(widget(), QPoint()).y() - 16); }
     void showDirectory() { verticalScrollBar()->setValue(countLabel->mapTo(widget(), QPoint()).y() - 16); }
     QList<ExploreTile *> sectionTiles() const {
         QList<ExploreTile *> tiles;
-        for (const auto &section : sections) tiles.append(section.masonry->tiles);
+        for (const auto &section : sections) if (!section.masonry->isHidden()) tiles.append(section.masonry->tiles);
         return tiles;
     }
     void applyFilters() {
@@ -449,10 +506,8 @@ public:
         const bool browse = ready && query.isEmpty() && category.isEmpty() && wanted == "All sources";
         carousel->setVisible(browse && carousel->count()); carouselDots->setVisible(browse && carousel->count() > 1);
         offlineNote->setVisible(browse && backend->rankings.offline);
-        for (const auto &section : sections) {
-            section.heading->setVisible(browse && !section.masonry->tiles.isEmpty());
-            section.masonry->setVisible(browse && !section.masonry->tiles.isEmpty());
-        }
+        browsing = browse;
+        updateSections();
         const QString order = sort->currentIndex() == 0 ? (query.isEmpty() ? "most popular first" : "best match first") : sort->currentText();
         QString heading = query.isEmpty() ? (category.isEmpty() ? "All apps" : category) : "Apps";
         countLabel->setText(QString("%1 · %2 · %3").arg(heading, QLocale().toString(resultItems.size()), order));
@@ -479,7 +534,7 @@ public:
             for (auto *tile : section.masonry->tiles) tiles.append(tile->app.name);
             sectionNames.append(tiles.join(','));
         }
-        passed &= sectionNames == QStringList{"GIMP,Krita", "Firefox", "", "", ""};
+        passed &= sectionNames == QStringList{"GIMP,Krita", "Firefox", "", ""};
         passed &= !filterPanel->isVisibleTo(this) && !filters->isChecked();
         filters->click(); filterMotion.setCurrentTime(filterMotion.duration());
         const int filterHeight = filterPanel->height(); filters->click();
@@ -740,20 +795,6 @@ private:
 
         QSet<int> used;
         QList<QList<int>> picks{ranked(rankings.trending, 8, false, &used), ranked(rankings.popular, 8, false, &used), ranked(rankings.added, 8, false, &used), ranked(rankings.updated, 8, false, &used)};
-        QList<int> arch;
-        for (int i = 0; i < apps.size(); ++i) {
-            // ponytail: pkgstats counts dependencies too (avahi, v4l-utils); requiring screenshots keeps their helper apps out.
-            if (apps[i].origin == MetadataOrigin::None || used.contains(i) || apps[i].screenshots.isEmpty()) continue;
-            for (const auto &package : apps[i].packages)
-                if (package.source == Source::Repo && rankings.archPopularity.contains(package.name)) { arch.append(i); break; }
-        }
-        auto archScore = [&](int index) {
-            double best = 0;
-            for (const auto &package : apps[index].packages) best = qMax(best, rankings.archPopularity.value(package.name));
-            return best;
-        };
-        std::sort(arch.begin(), arch.end(), [&](int a, int b) { return archScore(a) > archScore(b); });
-        picks.append(arch.mid(0, 8));
         for (int s = 0; s < sections.size(); ++s) {
             auto *masonry = sections[s].masonry;
             qDeleteAll(masonry->tiles); masonry->tiles.clear(); masonry->order.clear();
@@ -763,8 +804,11 @@ private:
                 connect(tile, &QAbstractButton::clicked, this, [this, tile] { openPreview(tile->app); });
             }
             masonry->arrange();
-            sections[s].heading->setVisible(!picks[s].isEmpty()); masonry->setVisible(!picks[s].isEmpty());
         }
+        for (int t = 0; t < sections.size(); ++t) flathubTabs->setTabEnabled(t, !sections[t].masonry->tiles.isEmpty());
+        if (!flathubTabs->isTabEnabled(flathubTabs->currentIndex()))
+            for (int t = 0; t < sections.size(); ++t) if (flathubTabs->isTabEnabled(t)) { flathubTabs->setCurrentIndex(t); break; }
+        updateSections();
     }
     void showMore(AppList *list, QPushButton *more, const QList<int> &items, int &shown) {
         const int end = qMin(int(items.size()), shown + pageSize);
