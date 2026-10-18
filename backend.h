@@ -6,6 +6,8 @@
 #include <AppStreamQt/pool.h>
 #include "catalog.h"
 #include "merge.h"
+#include "review.h"
+#include "ratings.h"
 #include <functional>
 #include <memory>
 
@@ -33,10 +35,18 @@ public:
     bool osMetadataMissing = false;  // archlinux-appstream-data is not installed
     MergeStats mergeStats;
     Rankings rankings;
+    bool fixtureMode = false;  // Checks use a fixed catalogue and must not call the network for ratings
     QStringList userRemotes, systemRemotes;
     void load();
     void loadInstalled();
     void loadRankings();
+    // Ratings for the details page; done runs once with whatever the sources returned (offline: the last saved answers).
+    void ratings(const CatalogApp &app, std::function<void(Ratings)> done);
+    // GET url, saved for a day in the cache folder; when offline the last saved copy is used. Empty when neither exists.
+    void cachedGet(const QUrl &url, std::function<void(QByteArray)> done);
+    void aurInfo(const QString &name, std::function<void(AurInfo, QString)> done);
+    bool installedPackage(const Package &package) const;
+    QSet<QString> nativePackages;  // Installed packages from the sync repos (pacman -Qqn); the Installed page lists only foreign ones
     // Test and preview data in place of the live sources: {apps, rankings, aur}. Emits catalogReady and rankingsReady.
     bool loadFixture(const QString &path);
     // Downloads once through the disk cache; local files load directly. done runs only while context lives.

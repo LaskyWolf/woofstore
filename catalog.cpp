@@ -117,8 +117,15 @@ QList<AurEntry> readAurCache(const QString &path, bool *ok) {
     return entries;
 }
 
-Rankings parseRankings(const QByteArray &popular, const QByteArray &trending, const QByteArray &pkgstats) {
+Rankings parseRankings(const QByteArray &popular, const QByteArray &trending, const QByteArray &pkgstats, const QByteArray &added, const QByteArray &updated) {
     Rankings rankings;
+    auto ids = [](const QByteArray &json, QStringList *out) {
+        for (const auto &value : QJsonDocument::fromJson(json).object().value("hits").toArray()) {
+            const QString id = value.toObject().value("app_id").toString();
+            if (!id.isEmpty()) out->append(id);
+        }
+    };
+    ids(added, &rankings.added); ids(updated, &rankings.updated);
     for (const auto &value : QJsonDocument::fromJson(popular).object().value("hits").toArray()) {
         const auto hit = value.toObject();
         const QString id = hit.value("app_id").toString();

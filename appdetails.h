@@ -101,7 +101,7 @@ public:
     AppScreenshot *screenshot = nullptr;
     QString currentId;
     PreviewOperations *operations = nullptr;
-    QPushButton *install = nullptr;
+    QPushButton *install = nullptr, *removeButton = nullptr;
     QToolButton *sourceButton = nullptr;
     explicit AppDetailsPage(QWidget *parent = nullptr) : QScrollArea(parent) {
         setWidgetResizable(true); setFrameShape(QFrame::NoFrame);
@@ -113,6 +113,7 @@ public:
         back->setAccessibleName("Back to Explore"); back->setToolTip("Back to Explore (Alt+Left)");
         auto *toolbar = new QHBoxLayout; toolbar->addWidget(back); toolbar->addStretch();
         install = new QPushButton("Install"); install->setObjectName("previewInstall"); install->setMinimumHeight(36); toolbar->addWidget(install);
+        removeButton = new QPushButton("Remove"); removeButton->setObjectName("detailsRemove"); removeButton->setMinimumHeight(36); removeButton->setIcon(QIcon::fromTheme("edit-delete")); removeButton->hide(); toolbar->addWidget(removeButton);
         sourceButton = new QToolButton; sourceButton->setObjectName("previewSource"); sourceButton->setText("Flatpak"); sourceButton->setMinimumHeight(36);
         sourceButton->setPopupMode(QToolButton::MenuButtonPopup); sourceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         connect(sourceButton, &QToolButton::clicked, sourceButton, &QToolButton::showMenu);
@@ -158,6 +159,9 @@ public:
         permissionNote = text(""); panelLayout->addWidget(permissionNote);
         permissionBody = new QWidget; permissionLayout = new QVBoxLayout(permissionBody); permissionLayout->setContentsMargins(0, 0, 0, 0); permissionLayout->setSpacing(18);
         panelLayout->addWidget(permissionBody); column->addWidget(permissionPanel);
+        ratingsPanel = new DetailPanel; ratingsPanel->setObjectName("ratingsPanel"); ratingsPanel->hide();
+        ratingsLayout = new QVBoxLayout(ratingsPanel); ratingsLayout->setContentsMargins(24, 24, 24, 24); ratingsLayout->setSpacing(8);
+        column->addWidget(ratingsPanel);
         auto *linksPanel = new DetailPanel; linksPanel->setObjectName("linksPanel");
         linksLayout = new QVBoxLayout(linksPanel); linksLayout->setContentsMargins(24, 24, 24, 24); linksLayout->setSpacing(12);
         column->addWidget(linksPanel);
@@ -169,10 +173,14 @@ public:
         if (package.source == Source::Aur) return "AUR · " + package.name;
         return "Repo · " + package.repo;
     }
+    // Real mode only: offered while the app is installed.
+    void refreshRemove() { removeButton->setVisible(operations && operations->installedState && operations->installedState(currentId)); }
     void showApp(const CatalogApp &app, const QString &platform = {}) {
         // Rebind per app; keep progress in the shared preview controller.
         if (installBinding) disconnect(installBinding);
         if (operations) installBinding = operations->bind(install, app.key, app.name);
+        if (removeBinding) disconnect(removeBinding);
+        if (operations) removeBinding = operations->bind(removeButton, app.key, app.name, "Remove");
         auto *menu = sourceButton->menu(); menu->clear();
         auto *group = new QActionGroup(menu); group->setExclusive(true);
         QStringList labels;
@@ -196,7 +204,7 @@ public:
         currentId = app.key; current = app; title->setText(app.name); summary->setText(app.summary);
         icon->setPixmap(catalogIcon(app).pixmap(96, 96));
         description->setText(readableDescription(app));
-        descriptionExpanded = false; updateDescription();
+        descriptionExpanded = false; updateDescription(); refreshRemove();
         screenshot->setImages({}); screenshot->hide(); galleryControls->hide();
         noScreenshot->setVisible(app.screenshots.isEmpty() && app.origin != MetadataOrigin::None);
         const QString key = app.key;
@@ -232,6 +240,11 @@ public:
             action->setIcon(QIcon::fromTheme("download"));
             if (operations) operations->bind(action, target.key, target.name);
             layout->addWidget(open, 1); layout->addWidget(action); addonLayout->addWidget(row);
+        }
+        ratingsPanel->hide();
+        if (backend) {
+            const QString ratingKey = app.key;
+            backend->ratings(app, [this, ratingKey](Ratings ratings) { if (currentId == ratingKey) showRatings(ratings); });
         }
         while (auto *item = linksLayout->takeAt(0)) { delete item->widget(); delete item; }
         linksLayout->addWidget(text("Links", 16, true));
@@ -337,7 +350,25 @@ protected:
         updateDescription();
     }
 private:
-    QMetaObject::Connection installBinding;
+    QMetaObject::Connection installBinding, removeBinding;
+    QWidget *ratingsPanel = nullptr;
+    QVBoxLayout *ratingsLayout = nullptr;
+    // Each row names its source. Stars come only from ODRS reviews; other sources show their own numbers.
+    void showRatings(const Ratings &ratings) {
+        while (auto *item = ratingsLayout->takeAt(0)) { delete item->widget(); delete item; }
+        QStringList lines;
+        if (ratings.reviews > 0) {
+            const int whole = qRound(ratings.stars);
+            lines << QString("%1%2  %3 · %4 reviews (GNOME ODRS)").arg(QString("★").repeated(whole), QString("☆").repeated(5 - whole)).arg(ratings.stars, 0, 'f', 1).arg(ratings.reviews);
+        }
+        if (ratings.installs >= 0) lines << QString("%1 installs on Flathub · %2 last month").arg(QLocale().toString(ratings.installs), QLocale().toString(ratings.installsMonth));
+        if (ratings.repoPercent >= 0) lines << QString("Installed on %1 % of Arch systems that share statistics (pkgstats)").arg(ratings.repoPercent, 0, 'f', 1);
+        if (ratings.aurVotes >= 0) lines << QString("%1 votes on the AUR · popularity %2").arg(ratings.aurVotes).arg(ratings.aurPopularity, 0, 'f', 2);
+        if (lines.isEmpty()) { ratingsPanel->hide(); return; }
+        ratingsLayout->addWidget(text("Ratings", 16, true));
+        for (const auto &line : lines) ratingsLayout->addWidget(text(line));
+        ratingsPanel->show();
+    }
     QVariantAnimation descriptionMotion;
     bool descriptionExpanded = false;
     QToolButton *descriptionToggle = nullptr;

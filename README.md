@@ -43,7 +43,7 @@ Restart the store after refreshing the catalogue.
 
 Use the top-left button to collapse or expand the sidebar. Compact mode keeps tooltips and keyboard navigation. The sidebar size is remembered. Settings is currently omitted; source filters remain on Explore.
 
-- **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and Trending on Flathub, Popular in Arch, and Popular on AUR. Install is still simulated.
+- **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and the sections Trending, Popular, New and Updated on Flathub, and Popular in Arch. Rankings refresh daily. The AUR has no equivalent lists in the store; its apps appear through search and the directory.
 - **Installed:** list Flatpaks, foreign Arch packages, and AppImages imported by this store. Foreign packages are labeled **AUR / local** because `pacman -Qm` does not prove AUR origin. Official repository packages are updated by Cachy-Update but are not listed here in this version.
 - **Updates:** check available updates and preview update acceptance. Update all and Review updates open a sample-password popup and simulate progress. These actions do not authorize or start real updates.
 - **Activity:** inspect simulated progress and history in a popup. The embedded-terminal demo also supports ordinary and hidden input. No package operation is started by the current file or update preview controls.
@@ -58,7 +58,17 @@ No files are copied, extracted, executed, or actually installed. Click any Insta
 
 Update all and Review updates open Confirm updates. Enter sample text in the masked field; Accept updates starts simulated progress. Cancel and accept clear the field. No password is sent to sudo, a package manager, or a system authorization service. Check for updates retains its read-only Cachy-Update check.
 
-AUR searching, recipe review, and real installations remain unconnected to this prototype interface.
+## Installing and removing
+
+Install, Reinstall and Remove run the real package manager in the embedded terminal, one operation at a time. File drops and Update all stay simulated.
+
+- **Flatpak:** `flatpak install <remote> <id>`.
+- **Repository:** `sudo pacman -S --needed <name>`.
+- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds with `pkgctl build` in a clean chroot (package `devtools`, `sudo pacman -S --needed devtools`) and installs only the built file with `sudo pacman -U`. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Build dependencies from the AUR are not resolved.
+- **Remove:** a dialog asks what else to delete. Caches are pre-selected; settings and data (`~/.config`, `~/.local/share`, `~/.var/app`) are not. They are deleted only after the package was removed. Only folders whose name equals the app or package name are offered.
+- **Open:** Flatpaks start with `flatpak run`; other apps through their desktop file.
+
+Pacman installs can cause a partial upgrade if your repository database is newer than your system; update the system first.
 
 ## Preview and harmless terminal test
 
@@ -90,7 +100,7 @@ Installed uses the same compact list as Explore. `--installed-preview` shows sam
 
 Updates fills the page with available updates. Its bottom action panel contains Update all, Check for updates, and Review updates. Update all and Review updates open the sample-password preview; no real update command runs. `--updates-preview idle`, `checking`, or `failed` captures labeled sample states without starting a check. `--list-selected` previews selection padding. UI checks use sample inventory rather than querying installed packages.
 
-App details and the Explore list have simulated Install buttons. Clicking changes Install to Installing… and then Open; Open does not launch an app. The source menu lists real packages; choosing one does not install anything yet. Progress is shared across buttons for the same app during this session.
+App details and the Explore list have Install buttons that run the real operation (see Installing and removing). The source menu lists real packages; the button installs from the selected one. The checks below use simulated operations. Progress is shared across buttons for the same app during this session.
 
 The bottom sidebar Activity control opens a modeless popup with activity history and embedded terminal prompts. Collapsing the sidebar keeps an activity icon and progress arc; expanding it adds a progress line. Preview tasks show percentages. Real package-manager progress is indeterminate. Closing this popup does not stop the operation.
 
@@ -112,7 +122,7 @@ Mouse Back and Forward navigate page history. App details opened from Installed 
 
 Drag supported local files over Installed to see a full content drop overlay with their formats and filenames. Dropping uses simulated installation. Activity → Clear removes completed history without resetting app installation state.
 
-App details include Changelog, Add-ons, Permissions, and Links in that order. Click an add-on row to read its details; Install starts its simulated installation directly. Publisher links open in the default browser. Flathub's packaging disclaimers are left out of descriptions.
+App details include Changelog, Add-ons, Permissions, Ratings, and Links in that order. Ratings show ODRS stars (five or more reviews), Flathub installs, pkgstats share and AUR votes, each with its source; rows without data are hidden. Opening an app sends its Flatpak ID to odrs.gnome.org and flathub.org; answers are cached for a day. Click an add-on row to read its details; Install starts its simulated installation directly. Publisher links open in the default browser. Flathub's packaging disclaimers are left out of descriptions.
 
 Explore starts with filters collapsed and the compact featured carousel. Nine categories combine Education and Science; each app joins one group from its AppStream categories.
 

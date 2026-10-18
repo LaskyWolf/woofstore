@@ -317,7 +317,7 @@ public:
     QToolButton *filters = nullptr;
     QWidget *filterPanel = nullptr;
     struct Section { QLabel *heading = nullptr; ExploreMasonry *masonry = nullptr; };
-    QList<Section> sections;  // Trending on Flathub, Popular in Arch, Popular on AUR
+    QList<Section> sections;  // Trending, Popular, New and Updated on Flathub; Popular in Arch. Empty ones are hidden.
     AppList *results = nullptr, *others = nullptr;
     PreviewOperations *operations = nullptr;
     QPushButton *loadMore = nullptr, *moreOthers = nullptr;
@@ -341,7 +341,7 @@ public:
         buildCarousel(layout);
         offlineNote = text("Offline: showing saved suggestions."); offlineNote->setObjectName("offlineNote"); offlineNote->hide();
         layout->addWidget(offlineNote);
-        for (const QString &title : {QString("Trending on Flathub"), QString("Popular in Arch"), QString("Popular on AUR")}) {
+        for (const QString &title : {QString("Trending on Flathub"), QString("Popular on Flathub"), QString("New on Flathub"), QString("Updated on Flathub"), QString("Popular in Arch")}) {
             Section section{text(title, 12, true), new ExploreMasonry};
             section.masonry->setObjectName("exploreSection"); layout->addWidget(section.heading); layout->addWidget(section.masonry);
             sections.append(section);
@@ -479,7 +479,7 @@ public:
             for (auto *tile : section.masonry->tiles) tiles.append(tile->app.name);
             sectionNames.append(tiles.join(','));
         }
-        passed &= sectionNames == QStringList{"GIMP,Krita", "Firefox", "pacseek"};
+        passed &= sectionNames == QStringList{"GIMP,Krita", "Firefox", "", "", ""};
         passed &= !filterPanel->isVisibleTo(this) && !filters->isChecked();
         filters->click(); filterMotion.setCurrentTime(filterMotion.duration());
         const int filterHeight = filterPanel->height(); filters->click();
@@ -696,7 +696,7 @@ private:
         if (tile->app.screenshots.isEmpty()) return;
         backend->fetchImage(tile->app.screenshots.first(), tile, [tile](const QPixmap &image) { tile->artwork = image; tile->update(); });
     }
-    // Featured slides and the three suggestion sections, from Flathub and pkgstats rankings.
+    // Featured slides and the suggestion sections, from Flathub and pkgstats rankings.
     void rebuildSuggestions() {
         hideHoverPreview();
         const auto &apps = backend->apps;
@@ -739,7 +739,7 @@ private:
         if (!dots.isEmpty()) dots.first()->setChecked(true);
 
         QSet<int> used;
-        QList<QList<int>> picks{ranked(rankings.trending, 8, false, &used)};
+        QList<QList<int>> picks{ranked(rankings.trending, 8, false, &used), ranked(rankings.popular, 8, false, &used), ranked(rankings.added, 8, false, &used), ranked(rankings.updated, 8, false, &used)};
         QList<int> arch;
         for (int i = 0; i < apps.size(); ++i) {
             // ponytail: pkgstats counts dependencies too (avahi, v4l-utils); requiring screenshots keeps their helper apps out.
@@ -754,14 +754,6 @@ private:
         };
         std::sort(arch.begin(), arch.end(), [&](int a, int b) { return archScore(a) > archScore(b); });
         picks.append(arch.mid(0, 8));
-        QList<int> aurOnly;
-        for (int i = 0; i < apps.size(); ++i) {
-            bool onlyAur = !apps[i].packages.isEmpty();
-            for (const auto &package : apps[i].packages) onlyAur &= package.source == Source::Aur;
-            if (onlyAur && !isLibraryName(apps[i].packages.first().name)) aurOnly.append(i);
-        }
-        std::sort(aurOnly.begin(), aurOnly.end(), [&apps](int a, int b) { return apps[a].packages.first().popularity > apps[b].packages.first().popularity; });
-        picks.append(aurOnly.mid(0, 8));
         for (int s = 0; s < sections.size(); ++s) {
             auto *masonry = sections[s].masonry;
             qDeleteAll(masonry->tiles); masonry->tiles.clear(); masonry->order.clear();
@@ -771,6 +763,7 @@ private:
                 connect(tile, &QAbstractButton::clicked, this, [this, tile] { openPreview(tile->app); });
             }
             masonry->arrange();
+            sections[s].heading->setVisible(!picks[s].isEmpty()); masonry->setVisible(!picks[s].isEmpty());
         }
     }
     void showMore(AppList *list, QPushButton *more, const QList<int> &items, int &shown) {

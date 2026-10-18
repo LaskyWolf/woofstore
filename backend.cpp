@@ -3,6 +3,7 @@
 #include <AppStreamQt/icon.h>
 #include <AppStreamQt/screenshot.h>
 #include <AppStreamQt/image.h>
+#include <AppStreamQt/launchable.h>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDirIterator>
@@ -342,6 +343,7 @@ void Backend::assemble() {
         app.categories = component.categories();
         app.keywords = component.keywords();
         app.componentId = component.id();
+        app.desktopId = component.launchable(AppStream::Launchable::KindDesktopId).entries().value(0);
         if (const auto release = component.releasesPlain().indexSafe(0)) {
             app.releaseVersion = release->version();
             app.releaseDate = release->timestamp().date();
@@ -450,7 +452,7 @@ void Backend::load() {
 void Backend::loadInstalled() {
     const quint64 generation = ++installedGeneration;
     auto apps = std::make_shared<Apps>(importedAppImages(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)));
-    auto pending = std::make_shared<int>(2);
+    auto pending = std::make_shared<int>(3);
     auto complete = [this, apps, pending, generation] {
         if (--*pending != 0 || generation != installedGeneration) return;
         installed = *apps;
@@ -472,6 +474,11 @@ void Backend::loadInstalled() {
             }
             complete();
         });
+    readCommand("pacman", {"-Qqn"}, [this, complete](int code, QString output, QString) {
+        nativePackages.clear();
+        if (code == 0) for (const QString &name : output.split('\n', Qt::SkipEmptyParts)) nativePackages.insert(name);
+        complete();
+    });
     readCommand("pacman", {"-Qm"}, [this, apps, complete](int code, QString output, QString error) {
         if (code != 0 && !error.isEmpty()) emit issue("Cannot list foreign Arch packages: " + error);
         for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
@@ -593,12 +600,14 @@ void Backend::loadRankings() {
     const QList<QPair<QString, QUrl>> sources{
         {dir + "/flathub-popular.json", QUrl("https://flathub.org/api/v2/collection/popular?page=1&per_page=250")},
         {dir + "/flathub-trending.json", QUrl("https://flathub.org/api/v2/collection/trending?page=1&per_page=50")},
-        {dir + "/pkgstats.json", QUrl("https://pkgstats.archlinux.de/api/packages?limit=3000&offset=0")}};
-    struct State { QList<QByteArray> data{{}, {}, {}}; int pending = 3; bool offline = false; };
+        {dir + "/pkgstats.json", QUrl("https://pkgstats.archlinux.de/api/packages?limit=3000&offset=0")},
+        {dir + "/flathub-added.json", QUrl("https://flathub.org/api/v2/collection/recently-added?page=1&per_page=60")},
+        {dir + "/flathub-updated.json", QUrl("https://flathub.org/api/v2/collection/recently-updated?page=1&per_page=60")}};
+    struct State { QList<QByteArray> data{{}, {}, {}, {}, {}}; int pending = 5; bool offline = false; };
     auto state = std::make_shared<State>();
     auto finish = [this, state] {
         if (--state->pending) return;
-        rankings = parseRankings(state->data[0], state->data[1], state->data[2]);
+        rankings = parseRankings(state->data[0], state->data[1], state->data[2], state->data[3], state->data[4]);
         rankings.offline = state->offline;
         emit rankingsReady();
     };
@@ -633,6 +642,7 @@ void Backend::loadRankings() {
 }
 
 bool Backend::loadFixture(const QString &path) {
+    fixtureMode = true;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return false;
     const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
@@ -676,6 +686,8 @@ bool Backend::loadFixture(const QString &path) {
     rankings = {};
     rankings.popular = root.value("popular").toVariant().toStringList();
     rankings.trending = root.value("trending").toVariant().toStringList();
+    rankings.added = root.value("added").toVariant().toStringList();
+    rankings.updated = root.value("updated").toVariant().toStringList();
     const auto installs = root.value("installs").toObject();
     for (auto it = installs.begin(); it != installs.end(); ++it) rankings.flathubInstalls.insert(it.key(), it.value().toDouble());
     const auto stats = root.value("pkgstats").toObject();
@@ -730,4 +742,81 @@ QList<CatalogApp> Backend::addons(const CatalogApp &app) const {
     }
     std::sort(result.begin(), result.end(), [](const CatalogApp &a, const CatalogApp &b) { return a.name.localeAwareCompare(b.name) < 0; });
     return result;
+}
+
+void Backend::aurInfo(const QString &name, std::function<void(AurInfo, QString)> done) {
+    if (!validPackageName(name)) { done({}, "Invalid AUR package name."); return; }
+    QUrl url("https://aur.archlinux.org/rpc/v5/info");
+    QUrlQuery query; query.addQueryItem("arg[]", name); url.setQuery(query);
+    QNetworkRequest request(url);
+    request.setTransferTimeout(20000);
+    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+    auto *reply = network.get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, done, name] {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) { done({}, "Cannot reach the AUR: " + reply->errorString()); return; }
+        bool ok = false;
+        const AurInfo info = parseAurInfo(reply->readAll(), &ok);
+        if (!ok || !validPackageName(info.base)) { done({}, "The AUR does not list a package named " + name + "."); return; }
+        done(info, {});
+    });
+}
+
+bool Backend::installedPackage(const Package &package) const {
+    if (package.source == Source::Repo) return nativePackages.contains(package.name);
+    const QString kind = package.source == Source::Flatpak ? "Flatpak" : "AUR / local";
+    for (const auto &app : installed) if (app.source == kind && app.id == package.name) return true;
+    return false;
+}
+
+void Backend::cachedGet(const QUrl &url, std::function<void(QByteArray)> done) {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/http";
+    QDir().mkpath(dir);
+    const QString path = dir + '/' + QString::fromLatin1(QCryptographicHash::hash(url.toEncoded(), QCryptographicHash::Sha1).toHex()) + ".json";
+    QFile saved(path);
+    if (QFileInfo(path).exists() && QFileInfo(path).lastModified().secsTo(QDateTime::currentDateTime()) < 24 * 3600 && saved.open(QIODevice::ReadOnly)) { done(saved.readAll()); return; }
+    QNetworkRequest request(url);
+    request.setTransferTimeout(15000);
+    request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+    auto *reply = network.get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, path, done] {
+        reply->deleteLater();
+        QByteArray data = reply->readAll();
+        if (reply->error() == QNetworkReply::NoError && QJsonDocument::fromJson(data).isObject()) {
+            QSaveFile file(path);
+            if (file.open(QIODevice::WriteOnly) && file.write(data) == data.size()) file.commit();
+        } else {
+            QFile old(path);
+            data = old.open(QIODevice::ReadOnly) ? old.readAll() : QByteArray();
+        }
+        done(data);
+    });
+}
+
+void Backend::ratings(const CatalogApp &app, std::function<void(Ratings)> done) {
+    QString flatpakId; double repoPercent = -1; QString aurName;
+    for (const auto &package : app.packages) {
+        if (package.source == Source::Flatpak && flatpakId.isEmpty()) flatpakId = package.name;
+        if (package.source == Source::Repo && repoPercent < 0 && package.popularity > 0) repoPercent = package.popularity;
+        if (package.source == Source::Aur && aurName.isEmpty()) aurName = package.name;
+    }
+    if (fixtureMode) { done({}); return; }
+    auto result = std::make_shared<Ratings>();
+    result->repoPercent = repoPercent;
+    auto pending = std::make_shared<int>(0);
+    auto finish = [result, pending, done] { if (--*pending == 0) done(*result); };
+    ++*pending;  // Held until every request below is queued, so a cache hit cannot finish early
+    if (!flatpakId.isEmpty() && QRegularExpression("^[A-Za-z0-9._-]+$").match(flatpakId).hasMatch()) {
+        *pending += 2;
+        cachedGet(QUrl("https://odrs.gnome.org/1.0/reviews/api/ratings/" + flatpakId), [result, finish](QByteArray data) { parseOdrs(data, result.get()); finish(); });
+        cachedGet(QUrl("https://flathub.org/api/v2/stats/" + flatpakId), [result, finish](QByteArray data) { parseFlathubStats(data, result.get()); finish(); });
+    }
+    if (!aurName.isEmpty()) {
+        ++*pending;
+        aurInfo(aurName, [result, finish](AurInfo info, QString failure) {
+            if (failure.isEmpty()) { result->aurVotes = info.votes; result->aurPopularity = info.popularity; }
+            finish();
+        });
+    }
+    finish();
 }

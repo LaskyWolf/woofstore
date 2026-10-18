@@ -35,6 +35,7 @@ struct CatalogApp {
     QStringList keywords;
     QList<Package> packages;
     QString componentId;  // Original AppStream ID, for add-on lookups
+    QString desktopId;    // Launcher file name, to open an installed app
     QString releaseVersion, releaseNotes;
     QDate releaseDate;
     MetadataOrigin origin = MetadataOrigin::None;
@@ -43,6 +44,7 @@ struct CatalogApp {
 // Popularity signals from Flathub and pkgstats; empty when never downloaded.
 struct Rankings {
     QStringList popular, trending;          // Flathub app IDs, best first
+    QStringList added, updated;             // Flathub app IDs, newest first
     QHash<QString, double> flathubInstalls; // Flathub app ID -> installs last month
     QHash<QString, double> archPopularity;  // pkgname -> % of pkgstats submitters
     bool offline = false;                   // Shown from the saved copy
@@ -67,7 +69,7 @@ QList<AurEntry> parseAurDump(const QByteArray &json, bool *ok = nullptr);
 bool writeAurCache(const QString &path, const QList<AurEntry> &entries);
 QList<AurEntry> readAurCache(const QString &path, bool *ok = nullptr);
 // Flathub /collection/popular and /collection/trending, pkgstats /api/packages. Bad input yields empty parts.
-Rankings parseRankings(const QByteArray &popular, const QByteArray &trending, const QByteArray &pkgstats);
+Rankings parseRankings(const QByteArray &popular, const QByteArray &trending, const QByteArray &pkgstats, const QByteArray &added = {}, const QByteArray &updated = {});
 // One comparable popularity score per entry, about 0..1, from each source's own signal.
 double appScore(const CatalogApp &app, const Rankings &rankings);
 // The Explore category group for AppStream categories, or empty.

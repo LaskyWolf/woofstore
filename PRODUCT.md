@@ -20,7 +20,7 @@ Discover software, inspect app details, and manage installed software within one
 
 ## Current Prototype
 
-Explore shows the real catalogue: Flathub, every pacman repository including CachyOS, and the AUR. The same app from several sources is one entry with a source menu. Search, categories, featured apps, and suggestion sections use this catalogue and daily popularity rankings from Flathub and pkgstats. App details show the publisher description, screenshots, latest release, add-ons, links, and permissions of installed Flatpaks. Install, Remove, and Update remain simulations.
+Explore shows the real catalogue: Flathub, every pacman repository including CachyOS, and the AUR. The same app from several sources is one entry with a source menu. Search, categories, featured apps, and suggestion sections use this catalogue and daily popularity rankings from Flathub and pkgstats. App details show the publisher description, screenshots, latest release, add-ons, links, and permissions of installed Flatpaks. Install, Reinstall and Remove run the real package manager; AUR builds require a review and run in a clean chroot. Update remains a simulation.
 
 Installed reads the backend inventory and merges session-only file preview rows. Every row opens the main Explore detail page. Known apps use catalogue metadata; unknown apps use available metadata and an icon fallback with explicit unavailable states. Remove, Reinstall, Install, and Open are simulations; they change no packages and launch no apps.
 

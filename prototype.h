@@ -78,7 +78,7 @@ private:
 // Preview actions never launch package managers or applications.
 class PreviewOperations : public QObject {
 public:
-    struct Activity { QString id, name, action; int progress = 0; bool cleared = false; };
+    struct Activity { QString id, name, action; int progress = 0; bool cleared = false, real = false, failed = false; };
     QList<Activity> activities;
     std::function<void()> onChanged;
     explicit PreviewOperations(QObject *parent = nullptr) : QObject(parent) {
@@ -86,6 +86,7 @@ public:
         connect(&timer, &QTimer::timeout, this, [this] {
             bool running = false;
             for (auto &activity : activities) {
+                if (activity.real) continue;  // Real operations end through finish()
                 activity.progress = qMin(100, activity.progress + 4);
                 running |= activity.progress < 100;
             }
@@ -95,18 +96,31 @@ public:
     QMetaObject::Connection bind(QPushButton *button, const QString &id, const QString &name, const QString &action = "Install") {
         for (int i = bindings.size() - 1; i >= 0; --i) if (bindings[i].button == button) bindings.removeAt(i);
         bindings.append({button, id, action});
-        button->setToolTip("No package changes");
+        if (!execute) button->setToolTip("No package changes");
         const auto connection = connect(button, &QPushButton::clicked, this, [this, id, name, action] {
             const auto *last = latest(id);
-            if (action == "Install" && last && last->progress == 100 && last->action != "Remove") {
-                if (onOpen) onOpen(name);
+            if (action == "Install" && ((last && last->progress == 100 && last->action != "Remove" && !last->failed) || (!last && installedState && installedState(id)))) {
+                if (onOpen) onOpen(id, name);
                 return;
             }
+            if (execute && execute(id, name, action)) return;  // Real mode: the caller starts the operation and calls begin()
             start(id, name, action);
         });
         refresh(); return connection;
     }
-    std::function<void(const QString &)> onOpen;
+    std::function<void(const QString &, const QString &)> onOpen;  // id, name
+    std::function<bool(const QString &, const QString &, const QString &)> execute;  // id, name, action; true when it took over
+    std::function<bool(const QString &)> installedState;  // Is this id installed right now?
+    void begin(const QString &id, const QString &name, const QString &action) {  // A real operation is running
+        activities.append({id, name, action, 0, false, true}); refresh();
+    }
+    void finish(const QString &id, bool ok) {
+        for (int i = activities.size() - 1; i >= 0; --i) if (activities[i].id == id && activities[i].real && activities[i].progress < 100) {
+            activities[i].progress = 100; activities[i].failed = !ok; break;
+        }
+        refresh();
+    }
+    void refreshButtons() { refresh(); }
     void start(const QString &id, const QString &name, const QString &action) {
         const auto *last = latest(id);
         if (last && last->progress < 100) return;
@@ -132,10 +146,12 @@ private:
             if (!binding.button) { bindings.removeAt(i); continue; }
             const auto *last = latest(binding.id);
             const bool busy = last && last->progress < 100;
+            const bool failed = last && last->failed;
             QString text = binding.action;
+            if (!last && binding.action == "Install" && installedState && installedState(binding.id)) text = "Open";
             if (busy) text = last->action == "Remove" ? "Removing…" : last->action == "Reinstall" ? "Reinstalling…" : "Installing…";
-            else if (last && binding.action == "Install" && last->action != "Remove") text = "Open";
-            else if (last && binding.action == "Remove" && last->action == "Remove") text = "Removed";
+            else if (last && !failed && binding.action == "Install" && last->action != "Remove") text = "Open";
+            else if (last && !failed && binding.action == "Remove" && last->action == "Remove") text = "Removed";
             binding.button->setText(text);
             binding.button->setEnabled(!busy && text != "Removed");
             binding.button->setAccessibleName(text);
