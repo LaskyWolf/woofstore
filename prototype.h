@@ -2,80 +2,6 @@
 #include <QtWidgets>
 #include <functional>
 
-class FileDropOverlay : public QWidget {
-public:
-    QString title, files;
-    explicit FileDropOverlay(QWidget *parent) : QWidget(parent) {
-        setObjectName("fileDropOverlay"); setAttribute(Qt::WA_TransparentForMouseEvents); hide();
-    }
-protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        QColor scrim = palette().color(QPalette::Window); scrim.setAlpha(235); p.fillRect(rect(), scrim);
-        const QRect box = rect().adjusted(24, 24, -24, -24);
-        p.setPen(QPen(palette().color(QPalette::Highlight), 2, Qt::DashLine)); p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(box, 12, 12);
-        const int center = height() / 2;
-        QIcon::fromTheme("document-import").paint(&p, width() / 2 - 28, center - 112, 56, 56);
-        QFont heading = font(); heading.setPointSizeF(font().pointSizeF() * 1.6); heading.setBold(true);
-        p.setFont(heading); p.setPen(palette().color(QPalette::WindowText));
-        p.drawText(QRect(40, center - 36, width() - 80, 72), Qt::AlignCenter | Qt::TextWordWrap, title);
-        p.setFont(font());
-        p.drawText(QRect(48, center + 48, width() - 96, 80), Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, files);
-    }
-};
-
-class FileDropPage : public QScrollArea {
-public:
-    std::function<void(const QList<QUrl> &)> onFiles;
-    explicit FileDropPage(QWidget *parent = nullptr) : QScrollArea(parent) { setAcceptDrops(true); }
-    static bool accepts(const QUrl &url) {
-        if (!url.isLocalFile()) return false;
-        const QFileInfo file(url.toLocalFile());
-        const QString suffix = file.suffix().toLower();
-        return file.isFile() && file.isReadable() && (suffix == "appimage" || suffix == "flatpak" || suffix == "flatpakref");
-    }
-protected:
-    void dragEnterEvent(QDragEnterEvent *event) override {
-        hideOverlay();
-        if (!event->mimeData()->hasUrls() || event->mimeData()->urls().isEmpty()) { event->ignore(); return; }
-        QStringList types, names;
-        for (const auto &url : event->mimeData()->urls()) {
-            if (!accepts(url)) { event->ignore(); return; }
-            const QFileInfo file(url.toLocalFile());
-            const QString type = file.suffix().compare("appimage", Qt::CaseInsensitive) == 0 ? "AppImage" : "Flatpak";
-            if (!types.contains(type)) types.append(type);
-            names.append(file.fileName());
-        }
-        auto *host = qobject_cast<QMainWindow *>(window());
-        QWidget *surface = host ? host->centralWidget() : viewport();
-        if (!overlay) overlay = new FileDropOverlay(surface);
-        overlay->title = "Drop to install " + types.join(" / ");
-        overlay->files = names.size() <= 3 ? names.join('\n') : QString("%1 files · %2").arg(names.size()).arg(names.first());
-        overlay->setAccessibleName(overlay->title + ". " + overlay->files);
-        overlay->setGeometry(surface->rect()); overlay->show(); overlay->raise(); overlay->update();
-        event->acceptProposedAction();
-    }
-    void dragMoveEvent(QDragMoveEvent *event) override { event->acceptProposedAction(); }
-    void dragLeaveEvent(QDragLeaveEvent *event) override { hideOverlay(); event->accept(); }
-    void hideEvent(QHideEvent *event) override { hideOverlay(); QScrollArea::hideEvent(event); }
-    void resizeEvent(QResizeEvent *event) override {
-        QScrollArea::resizeEvent(event);
-        if (overlay) overlay->setGeometry(overlay->parentWidget()->rect());
-    }
-    void dropEvent(QDropEvent *event) override {
-        hideOverlay();
-        for (const auto &url : event->mimeData()->urls()) if (!accepts(url)) { event->ignore(); return; }
-        if (event->mimeData()->urls().isEmpty()) { event->ignore(); return; }
-        if (onFiles) onFiles(event->mimeData()->urls());
-        event->acceptProposedAction();
-    }
-private:
-    QPointer<FileDropOverlay> overlay;
-    void hideOverlay() { if (overlay) overlay->hide(); }
-};
-
-// Preview actions never launch package managers or applications.
 class PreviewOperations : public QObject {
 public:
     struct Activity { QString id, name, action; int progress = 0; bool cleared = false, real = false, failed = false; };
@@ -152,22 +78,25 @@ private:
             if (busy) text = last->action == "Remove" ? "Removing…" : last->action == "Reinstall" ? "Reinstalling…" : "Installing…";
             else if (last && !failed && binding.action == "Install" && last->action != "Remove") text = "Open";
             else if (last && !failed && binding.action == "Remove" && last->action == "Remove") text = "Removed";
-            binding.button->setText(text);
+            const bool iconOnly = binding.button->property("iconOnly").toBool();  // The state still shows as tooltip
+            binding.button->setText(iconOnly ? QString() : text);
+            binding.button->setProperty("state", text);
+            if (iconOnly) binding.button->setToolTip(text);
             binding.button->setEnabled(!busy && text != "Removed");
-            binding.button->setAccessibleName(text);
+            if (!iconOnly) binding.button->setAccessibleName(text);
         }
         if (onChanged) onChanged();
     }
 };
 
 // Lucide icons (ISC license) drawn on their 24 x 24 grid so every icon shares one stroke and follows the theme color.
-inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, const QColor &color) {
+inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, const QColor &color, qreal weight = 2) {
     const qreal unit = box.width() / 24;
     auto at = [&](qreal x, qreal y) { return QPointF(box.left() + x * unit, box.top() + y * unit); };
     auto line = [&](qreal x1, qreal y1, qreal x2, qreal y2) { p.drawLine(at(x1, y1), at(x2, y2)); };
     auto square = [&](qreal x, qreal y, qreal size, qreal radius) { p.drawRoundedRect(QRectF(at(x, y), QSizeF(size * unit, size * unit)), radius * unit, radius * unit); };
     p.save(); p.setRenderHint(QPainter::Antialiasing); p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(color, 2 * unit, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setPen(QPen(color, weight * unit, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     if (name == "calendar") { line(8, 2, 8, 6); line(16, 2, 16, 6); line(3, 10, 21, 10); square(3, 4, 18, 2); }
     else if (name == "compass") {
         p.drawEllipse(at(12, 12), 10 * unit, 10 * unit);
@@ -182,6 +111,21 @@ inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, cons
             QPainterPath path; path.arcMoveTo(QRectF(at(3, 3), QSizeF(18 * unit, 18 * unit)), 180); path.arcTo(QRectF(at(3, 3), QSizeF(18 * unit, 18 * unit)), 180, -137);
             path.lineTo(at(21, 8)); p.drawPath(path); line(21, 3, 21, 8); line(21, 8, 16, 8); p.restore();
         }
+    } else if (name == "package") {
+        const QPointF hexagon[] = {at(12, 2.3), at(20.7, 7.2), at(20.7, 16.8), at(12, 21.7), at(3.3, 16.8), at(3.3, 7.2)};
+        p.drawPolygon(hexagon, 6); line(3.3, 7.2, 12, 12); line(12, 12, 20.7, 7.2); line(12, 12, 12, 21.7);
+    } else if (name == "arch") { line(12, 3, 4.5, 21); line(12, 3, 19.5, 21); line(8, 16.5, 16, 16.5);
+    } else if (name == "app-window") { square(2, 4, 20, 2); line(2, 9, 22, 9); line(6, 6.5, 6.1, 6.5); line(9, 6.5, 9.1, 6.5);
+    } else if (name == "grid") { square(3, 3, 7, 1); square(14, 3, 7, 1); square(3, 14, 7, 1); square(14, 14, 7, 1);
+    } else if (name == "circle-check") { p.drawEllipse(at(12, 12), 10 * unit, 10 * unit); line(8, 12, 11, 15); line(11, 15, 16, 9);
+    } else if (name == "circle-x") { p.drawEllipse(at(12, 12), 10 * unit, 10 * unit); line(15, 9, 9, 15); line(9, 9, 15, 15);
+    } else if (name == "trending") { line(22, 7, 13.5, 15.5); line(13.5, 15.5, 8.5, 10.5); line(8.5, 10.5, 2, 17); line(16, 7, 22, 7); line(22, 7, 22, 13);
+    } else if (name == "star") {
+        QPolygonF star; for (int i = 0; i < 10; ++i) { const qreal angle = M_PI * (-0.5 + i / 5.), radius = i % 2 ? 4.6 : 10; star << at(12 + radius * std::cos(angle), 12.8 + radius * std::sin(angle)); }
+        p.drawPolygon(star);
+    } else if (name == "sparkle") {
+        const QPointF spark[] = {at(12, 2.5), at(14.3, 9.7), at(21.5, 12), at(14.3, 14.3), at(12, 21.5), at(9.7, 14.3), at(2.5, 12), at(9.7, 9.7)};
+        p.drawPolygon(spark, 8);
     } else if (name == "panel-close" || name == "panel-open") {
         square(3, 3, 18, 2); line(9, 3, 9, 21);
         if (name == "panel-close") { line(16, 15, 13, 12); line(13, 12, 16, 9); } else { line(14, 9, 17, 12); line(17, 12, 14, 15); }
@@ -194,10 +138,170 @@ inline QIcon lucideIcon(const QString &name, int size = 22) {
     return QIcon(pixmap);
 }
 
+// Calls a function for the events of the objects it watches, without subclassing them.
+class EventHook : public QObject {
+public:
+    std::function<void(QObject *, QEvent *)> on;
+    EventHook(QObject *parent, std::function<void(QObject *, QEvent *)> handler) : QObject(parent), on(std::move(handler)) {}
+    bool eventFilter(QObject *object, QEvent *event) override { on(object, event); return false; }
+};
+
+// A page that scrolls. When it needs no scrollbar, the room for it stays empty, so every page has the same width.
+class PageScroll : public QScrollArea {
+public:
+    explicit PageScroll(QWidget *parent = nullptr) : QScrollArea(parent) {
+        auto *bar = verticalScrollBar();
+        bar->installEventFilter(new EventHook(this, [this](QObject *, QEvent *event) {
+            if (event->type() == QEvent::Show || event->type() == QEvent::Hide) QTimer::singleShot(0, this, [this] { syncRoom(); });
+        }));
+        QTimer::singleShot(0, this, [this] { syncRoom(); });
+    }
+private:
+    int room = 0;
+    void syncRoom() {
+        const int want = verticalScrollBar()->isVisibleTo(this) ? 0 : style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, verticalScrollBar());
+        if (want != room) { room = want; setViewportMargins(0, 0, want, 0); }
+    }
+};
+
+// A header that stays at the top of a PageScroll while its page scrolls. Put the header's widgets in `column`, then call fit().
+// A placeholder (`slot`) keeps the header's room in the page; the bar itself floats over the viewport.
+class StickyBar : public QWidget {
+public:
+    QVBoxLayout *column;
+    StickyBar(QScrollArea *scroll, QVBoxLayout *body) : QWidget(scroll->viewport()), scroll(scroll) {
+        setObjectName("stickyBar"); setAutoFillBackground(true);
+        column = new QVBoxLayout(this); column->setContentsMargins(0, 0, 0, 0); column->setSpacing(12);
+        slot = new QWidget; body->addWidget(slot);
+        auto *hook = new EventHook(this, [this](QObject *, QEvent *event) {
+            if (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show) place();
+        });
+        slot->installEventFilter(hook); scroll->viewport()->installEventFilter(hook);
+        QObject::connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { place(); });
+    }
+    void fit() { column->activate(); slot->setFixedHeight(sizeHint().height()); place(); }
+private:
+    QScrollArea *scroll; QWidget *slot; bool stuck = false;
+    void place() {
+        const QPoint home = slot->mapTo(scroll->viewport(), QPoint(0, 0));
+        const bool now = home.y() < 0;
+        if (now != stuck) {
+            stuck = now;
+            // A stylesheet replaces the automatic background fill, so the colour is part of it.
+            column->setContentsMargins(now ? home.x() : 0, now ? 8 : 0, now ? home.x() : 0, now ? 8 : 0);
+            setStyleSheet(now ? "#stickyBar { background: palette(window); border-bottom: 1px solid palette(mid); }" : QString());
+        }
+        // Stuck, the bar spans the whole viewport so nothing shows through at the sides.
+        if (now) setGeometry(0, 0, scroll->viewport()->width(), slot->height() + 16);
+        else setGeometry(home.x(), home.y(), slot->width(), slot->height());
+        raise();
+    }
+};
+
+// The mirror of StickyBar: a widget at the end of a page that stays at the bottom of the window while the page is longer than it.
+class StickyFooter : public QWidget {
+public:
+    StickyFooter(QScrollArea *scroll, QVBoxLayout *body, QWidget *content) : QWidget(scroll->viewport()), scroll(scroll) {
+        setObjectName("stickyFooter"); setAutoFillBackground(true);
+        row = new QVBoxLayout(this); row->setContentsMargins(0, 0, 0, 0); row->addWidget(content);
+        slot = new QWidget; slot->setFixedHeight(qMax(content->sizeHint().height(), content->minimumHeight())); body->addWidget(slot);
+        auto *hook = new EventHook(this, [this](QObject *, QEvent *event) {
+            if (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show) place();
+        });
+        slot->installEventFilter(hook); scroll->viewport()->installEventFilter(hook);
+        QObject::connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { place(); });
+    }
+private:
+    QScrollArea *scroll; QWidget *slot; QVBoxLayout *row; bool stuck = false;
+    void place() {
+        const QPoint home = slot->mapTo(scroll->viewport(), QPoint(0, 0));
+        const int viewHeight = scroll->viewport()->height();
+        const bool now = home.y() + slot->height() > viewHeight;
+        if (now != stuck) {
+            stuck = now;
+            row->setContentsMargins(now ? home.x() : 0, now ? 8 : 0, now ? home.x() : 0, now ? 8 : 0);
+            setStyleSheet(now ? "#stickyFooter { background: palette(window); border-top: 1px solid palette(mid); }" : QString());
+        }
+        if (now) setGeometry(0, viewHeight - slot->height() - 16, scroll->viewport()->width(), slot->height() + 16);
+        else setGeometry(home.x(), home.y(), slot->width(), slot->height());
+        raise();
+    }
+};
+
+// Colour and glyph that identify where an app comes from.
+struct SourceStyle { QColor color; QString glyph; };
+inline SourceStyle sourceStyle(const QString &source) {
+    if (source == "Flatpak") return {QColor("#3584e4"), "package"};
+    if (source == "Arch") return {QColor("#1c9fb4"), "arch"};
+    if (source == "AUR" || source == "AUR / local") return {QColor("#e5a50a"), "arch"};
+    if (source == "AppImage") return {QColor("#9141ac"), "app-window"};
+    return {QColor("#6c757d"), "grid"};
+}
+class SourceBadge : public QWidget {
+public:
+    QString source;
+    explicit SourceBadge(const QString &name, int size = 28, QWidget *parent = nullptr) : QWidget(parent), source(name) { setFixedSize(size, size); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const auto style = sourceStyle(source);
+        p.setPen(Qt::NoPen); p.setBrush(style.color); p.drawRoundedRect(rect(), width() * .25, width() * .25);
+        const qreal inset = width() * .2;
+        drawLucide(p, style.glyph, QRectF(inset, inset, width() - 2 * inset, width() - 2 * inset), Qt::white);
+    }
+};
+
+// A card that opens a file chooser on click and takes dropped files of its own kind.
+class DropCard : public QAbstractButton {
+public:
+    QString source, caption;
+    std::function<bool(const QUrl &)> accepts;
+    std::function<void(const QList<QUrl> &)> onFiles;
+    DropCard(const QString &title, const QString &kind, const QString &hint, QWidget *parent = nullptr) : QAbstractButton(parent), source(kind), caption(hint) {
+        setText(title); setAcceptDrops(true); setMinimumHeight(84); setCursor(Qt::PointingHandCursor); setFocusPolicy(Qt::StrongFocus);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setAccessibleName(title);
+    }
+    bool dragging = false;
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const QColor accent = sourceStyle(source).color;
+        QColor fill = palette().color(underMouse() || hasFocus() ? QPalette::Button : QPalette::AlternateBase);
+        if (dragging) { fill = accent; fill.setAlphaF(.18); }
+        p.setPen(Qt::NoPen); p.setBrush(fill); p.drawRoundedRect(rect(), 12, 12);
+        if (dragging) { p.setBrush(Qt::NoBrush); p.setPen(QPen(accent, 2, Qt::DashLine)); p.drawRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 12, 12); }
+        const int badge = 48; const QRectF box(20, (height() - badge) / 2., badge, badge);
+        p.setPen(Qt::NoPen); p.setBrush(accent); p.drawRoundedRect(box, 12, 12);
+        drawLucide(p, sourceStyle(source).glyph, box.adjusted(11, 11, -11, -11), Qt::white);
+        QFont bold = font(); bold.setBold(true); bold.setPointSizeF(bold.pointSizeF() * 1.1);
+        p.setFont(bold); p.setPen(palette().color(QPalette::WindowText));
+        p.drawText(QRectF(box.right() + 16, 0, width() - box.right() - 28, height() / 2. + 2), Qt::AlignLeft | Qt::AlignBottom, text());
+        p.setFont(font()); p.setPen(palette().color(QPalette::PlaceholderText));
+        p.drawText(QRectF(box.right() + 16, height() / 2. + 6, width() - box.right() - 28, height() / 2. - 6), Qt::AlignLeft | Qt::AlignTop, dragging ? "Release to install" : caption);
+    }
+    void dragEnterEvent(QDragEnterEvent *event) override {
+        bool ok = event->mimeData()->hasUrls() && !event->mimeData()->urls().isEmpty();
+        if (ok) for (const auto &url : event->mimeData()->urls()) ok &= bool(accepts) && accepts(url);
+        if (!ok) { event->ignore(); return; }
+        dragging = true; update(); event->acceptProposedAction();
+    }
+    void dragMoveEvent(QDragMoveEvent *event) override { event->acceptProposedAction(); }
+    void dragLeaveEvent(QDragLeaveEvent *event) override { dragging = false; update(); event->accept(); }
+    void dropEvent(QDropEvent *event) override {
+        dragging = false; update();
+        if (onFiles) onFiles(event->mimeData()->urls());
+        event->acceptProposedAction();
+    }
+    void enterEvent(QEnterEvent *) override { update(); }
+    void leaveEvent(QEvent *) override { update(); }
+};
+
 // A sidebar entry. The icon never moves; widening or narrowing the button only reveals or hides the label.
 class NavButton : public QAbstractButton {
 public:
     QString glyph;
+    int badge = 0;  // Count shown on the icon, e.g. pending updates
     NavButton(const QString &label, const QString &icon, QWidget *parent = nullptr) : QAbstractButton(parent), glyph(icon) {
         setText(label); setCheckable(true); setFixedHeight(40); setCursor(Qt::PointingHandCursor); setFocusPolicy(Qt::StrongFocus);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -209,6 +313,11 @@ protected:
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
         if (isChecked() || underMouse()) { p.setPen(Qt::NoPen); p.setBrush(palette().color(isChecked() ? QPalette::Midlight : QPalette::Button)); p.drawRoundedRect(rect(), 8, 8); }
         drawLucide(p, glyph, QRectF(9, height() / 2. - 11, 22, 22), palette().color(QPalette::WindowText));
+        if (badge > 0) {
+            const QPointF c(32, height() / 2. - 9); p.setPen(Qt::NoPen); p.setBrush(QColor("#da4453")); p.drawEllipse(c, 8, 8);
+            QFont small = font(); small.setPointSizeF(7.5); small.setBold(true); p.setFont(small); p.setPen(Qt::white);
+            p.drawText(QRectF(c.x() - 8, c.y() - 8, 16, 16), Qt::AlignCenter, badge > 9 ? "9+" : QString::number(badge)); p.setFont(font());
+        }
         const qreal shown = reveal(width());
         if (shown > 0) {
             QColor ink = palette().color(QPalette::WindowText); ink.setAlphaF(shown);

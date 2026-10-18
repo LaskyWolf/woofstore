@@ -119,7 +119,7 @@ Apps importedAppImages(const QString &dataRoot) {
             for (const QByteArray &line : launcher.readAll().split('\n'))
                 if (line.startsWith("Name=")) app.name = QString::fromUtf8(line.mid(5));
         }
-        app.source = "AppImage";
+        app.source = "AppImage"; app.launcher = dataRoot + "/applications/woof-store-" + app.id + ".desktop";
         app.scope = "user";
         app.summary = "Imported portable app";
         app.icon = QIcon::fromTheme("application-x-executable");
@@ -451,12 +451,104 @@ void Backend::load() {
     loadInstalled();
 }
 
+std::optional<Launcher> parseLauncher(const QString &path, const QByteArray &text, const QString &language) {
+    Launcher launcher; launcher.path = path;
+    QString name, comment, localName, localComment, type, onlyShowIn; bool hidden = false, inEntry = false;
+    const QString shortLanguage = language.section('_', 0, 0);
+    for (const QByteArray &raw : text.split('\n')) {
+        const QString line = QString::fromUtf8(raw).trimmed();
+        if (line.startsWith('[')) { inEntry = line == "[Desktop Entry]"; continue; }
+        if (!inEntry || line.startsWith('#')) continue;
+        const int equals = line.indexOf('=');
+        if (equals < 1) continue;
+        const QString key = line.left(equals).trimmed(), value = line.mid(equals + 1).trimmed();
+        if (key == "Name") name = value;
+        else if (key == "Name[" + language + "]" || (key == "Name[" + shortLanguage + "]" && localName.isEmpty())) localName = value;
+        else if (key == "Comment") comment = value;
+        else if (key == "Comment[" + language + "]" || (key == "Comment[" + shortLanguage + "]" && localComment.isEmpty())) localComment = value;
+        else if (key == "Icon") launcher.icon = value;
+        else if (key == "Exec") launcher.exec = value;
+        else if (key == "Type") type = value;
+        else if (key == "OnlyShowIn") onlyShowIn = value;
+        else if (key == "NoDisplay" || key == "Hidden") hidden |= value.compare("true", Qt::CaseInsensitive) == 0;
+    }
+    if (hidden || type != "Application" || launcher.exec.isEmpty()) return std::nullopt;
+    if (!onlyShowIn.isEmpty() && !onlyShowIn.split(';').contains("KDE")) return std::nullopt;
+    if (launcher.exec.contains("steam://rungameid")) return std::nullopt;  // Games are managed by Steam
+    launcher.name = localName.isEmpty() ? name : localName;
+    launcher.comment = localComment.isEmpty() ? comment : localComment;
+    if (launcher.name.isEmpty()) return std::nullopt;
+    launcher.id = QFileInfo(path).completeBaseName();
+    launcher.flatpak = path.contains("/flatpak/exports/");
+    return launcher;
+}
+
+QList<Launcher> scanLaunchers(const QStringList &dirs, const QString &language) {
+    QList<Launcher> result; QSet<QString> seen;
+    for (const QString &dir : dirs) {
+        QDirIterator files(dir, {"*.desktop"}, QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QString path = files.next();
+            // Like the menu: the first folder that has an ID wins, so a user entry hides the system one.
+            const QString id = QDir(dir).relativeFilePath(path).replace('/', '-');
+            if (seen.contains(id)) continue;
+            seen.insert(id);
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) continue;
+            if (auto launcher = parseLauncher(path, file.readAll(), language)) result.append(*launcher);
+        }
+    }
+    return result;
+}
+
+static QIcon launcherIcon(const Launcher &launcher, const QString &fallback) {
+    if (launcher.icon.startsWith('/')) return QFileInfo::exists(launcher.icon) ? QIcon(launcher.icon) : QIcon::fromTheme(fallback);
+    return QIcon::fromTheme(launcher.icon, QIcon::fromTheme(launcher.id, QIcon::fromTheme(fallback)));
+}
+
+// The program an AppImage launcher starts, without quotes and arguments.
+static QString launcherProgram(const QString &exec) {
+    const QString trimmed = exec.trimmed();
+    if (trimmed.startsWith('"')) return trimmed.mid(1).section('"', 0, 0);
+    return trimmed.section(' ', 0, 0);
+}
+
 void Backend::loadInstalled() {
     const quint64 generation = ++installedGeneration;
     auto apps = std::make_shared<Apps>(importedAppImages(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)));
-    auto pending = std::make_shared<int>(3);
-    auto complete = [this, apps, pending, generation] {
+    QStringList dirs = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+    for (const QString &flatpakDir : {QString("/var/lib/flatpak/exports/share/applications"), QDir::homePath() + "/.local/share/flatpak/exports/share/applications"})
+        if (!dirs.contains(flatpakDir)) dirs << flatpakDir;
+    const auto launchers = std::make_shared<QList<Launcher>>(scanLaunchers(dirs, QLocale().name()));
+    auto owners = std::make_shared<QHash<QString, QPair<QString, QString>>>();  // launcher path -> package, version
+    auto foreign = std::make_shared<QSet<QString>>();
+    auto pending = std::make_shared<int>(4);
+    auto complete = [this, apps, launchers, owners, foreign, pending, generation] {
         if (--*pending != 0 || generation != installedGeneration) return;
+        // Like the menu: one row per application. A package with several launchers gets one row under its own name.
+        QMap<QString, QList<const Launcher *>> byPackage;
+        QSet<QString> flatpakIds; for (const auto &app : *apps) if (app.source == "Flatpak") flatpakIds.insert(app.id);
+        for (const auto &launcher : *launchers) {
+            if (launcher.flatpak) {
+                for (auto &app : *apps) if (app.source == "Flatpak" && app.id == launcher.id) { app.summary = launcher.comment; app.launcher = launcher.path; app.icon = launcherIcon(launcher, "application-x-executable"); }
+                continue;
+            }
+            if (launcher.id.startsWith("woof-store-")) continue;  // Our own AppImage launchers; the imported list covers them
+            if (owners->contains(launcher.path)) { byPackage[owners->value(launcher.path).first].append(&launcher); continue; }
+            App app; app.id = launcher.id; app.name = launcher.name; app.summary = launcher.comment; app.scope = launcher.path.startsWith(QDir::homePath()) ? "user" : "system"; app.launcher = launcher.path;
+            app.icon = launcherIcon(launcher, "application-x-executable");
+            if (launcher.exec.contains(".appimage", Qt::CaseInsensitive)) { app.source = "AppImage"; app.path = launcherProgram(launcher.exec); }
+            else app.source = "Other";
+            apps->append(app);
+        }
+        for (auto it = byPackage.cbegin(); it != byPackage.cend(); ++it) {
+            const Launcher &first = *it.value().first();
+            App app; app.id = it.key(); app.version = owners->value(first.path).second; app.scope = "system";
+            app.source = foreign->contains(it.key()) ? "AUR / local" : "Arch";
+            app.name = it.value().size() == 1 ? first.name : it.key(); app.summary = it.value().size() == 1 ? first.comment : QString();
+            app.icon = launcherIcon(first, "package-x-generic"); app.launcher = first.path;
+            apps->append(app);
+        }
         installed = *apps;
         std::sort(installed.begin(), installed.end(), [](const App &a, const App &b) { return a.name.localeAwareCompare(b.name) < 0; });
         emit installedChanged();
@@ -470,7 +562,6 @@ void Backend::loadInstalled() {
                 App app;
                 app.id = f[0]; app.name = f[1]; app.version = f[2]; app.remote = f[3]; app.scope = f[4]; app.branch = f[5];
                 app.source = "Flatpak";
-                app.summary = f[3] + " · " + f[4];
                 app.icon = QIcon::fromTheme(app.id, QIcon::fromTheme(app.id.section('.', -1).toLower(), QIcon::fromTheme("application-x-executable")));
                 apps->append(app);
             }
@@ -481,19 +572,85 @@ void Backend::loadInstalled() {
         if (code == 0) for (const QString &name : output.split('\n', Qt::SkipEmptyParts)) nativePackages.insert(name);
         complete();
     });
-    readCommand("pacman", {"-Qm"}, [this, apps, complete](int code, QString output, QString error) {
+    readCommand("pacman", {"-Qqm"}, [this, foreign, complete](int code, QString output, QString error) {
         if (code != 0 && !error.isEmpty()) emit issue("Cannot list foreign Arch packages: " + error);
+        for (const QString &name : output.split('\n', Qt::SkipEmptyParts)) foreign->insert(name.trimmed());
+        complete();
+    });
+    // Which package owns each system launcher; files that no package owns make pacman print an error, which is fine.
+    QStringList paths;
+    for (const auto &launcher : *launchers) if (!launcher.flatpak && !launcher.path.startsWith(QDir::homePath())) paths << launcher.path;
+    if (paths.isEmpty()) { complete(); return; }
+    readCommand("pacman", QStringList{"-Qo"} + paths, [owners, complete](int, QString output, QString) {
+        static const QRegularExpression owned("^(.+) is owned by (\\S+) (\\S+)$");
         for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
-            const auto f = line.split(' ', Qt::SkipEmptyParts);
-            if (f.size() < 2) continue;
-            App app;
-            app.id = app.name = f[0]; app.version = f[1]; app.source = "AUR / local";
-            app.summary = "Foreign Arch package · AUR origin is not verified";
-            app.icon = QIcon::fromTheme(f[0], QIcon::fromTheme("package-x-generic"));
-            apps->append(app);
+            const auto match = owned.match(line.trimmed());
+            if (match.hasMatch()) owners->insert(match.captured(1), {match.captured(2), match.captured(3)});
         }
         complete();
     });
+}
+
+QPair<QString, QString> versionDiff(const QString &from, const QString &to) {
+    auto wrap = [](const QString &text, const char *color) { return text.isEmpty() ? QString() : QString("<span style=\"color:%1; font-weight:600\">%2</span>").arg(color, text.toHtmlEscaped()); };
+    int prefix = 0;
+    while (prefix < from.size() && prefix < to.size() && from[prefix] == to[prefix]) ++prefix;
+    // Do not cut a number in half: step back to the start of the version part that differs.
+    auto continues = [&](int at) { return (at < from.size() && from[at].isLetterOrNumber()) || (at < to.size() && to[at].isLetterOrNumber()); };
+    while (prefix > 0 && from[prefix - 1].isLetterOrNumber() && continues(prefix)) --prefix;
+    // Everything from the first difference to the end is coloured, so "2.5.2-1.1" and "2.5.3-1.1" differ from the "2" on.
+    const QString head = from.left(prefix).toHtmlEscaped();
+    return {head + wrap(from.mid(prefix), "#da4453"), head + wrap(to.mid(prefix), "#27ae60")};
+}
+
+QList<UpdateEntry> parseArchUpdates(const QString &text, const QString &source) {
+    static const QRegularExpression line("^(\\S+)\\s+(\\S+)\\s+->\\s+(\\S+)$");
+    QList<UpdateEntry> result;
+    for (const QString &row : text.split('\n', Qt::SkipEmptyParts)) {
+        const auto match = line.match(row.trimmed());
+        if (match.hasMatch()) result.append({match.captured(1), match.captured(1), match.captured(2), match.captured(3), source});
+    }
+    return result;
+}
+
+QList<UpdateEntry> parseFlatpakUpdates(const QString &text, const QHash<QString, QString> &installedVersions) {
+    QList<UpdateEntry> result; QSet<QString> seen;
+    for (const QString &row : text.split('\n', Qt::SkipEmptyParts)) {
+        const auto f = row.split('\t');
+        if (f.size() < 3 || f[0].isEmpty() || seen.contains(f[0])) continue;
+        seen.insert(f[0]);
+        result.append({f[0], f[1].isEmpty() ? f[0] : f[1], installedVersions.value(f[0]), f[2], "Flatpak"});
+    }
+    return result;
+}
+
+void Backend::refresh() {
+    QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/http").removeRecursively();
+    loadRankings();
+    loadInstalled();
+}
+
+void Backend::checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> done) {
+    auto found = std::make_shared<QList<UpdateEntry>>();
+    auto problems = std::make_shared<QStringList>();
+    auto pending = std::make_shared<int>(3);
+    auto finish = [found, problems, pending, done] { if (--*pending == 0) done(*found, *problems); };
+    QHash<QString, QString> versions; for (const auto &app : installed) if (app.source == "Flatpak") versions.insert(app.id, app.version);
+    // Exit codes: checkupdates 2 and paru 1 mean "nothing to update"; a missing tool is skipped.
+    readCommand("checkupdates", {}, [found, problems, finish](int code, QString output, QString error) {
+        if (code == 0) *found += parseArchUpdates(output, "Arch");
+        else if (code != 2 && code != -1) problems->append("Arch packages: " + error.trimmed());
+        finish();
+    }, 120000);
+    readCommand("paru", {"-Qua"}, [found, finish](int code, QString output, QString) {
+        if (code == 0) *found += parseArchUpdates(output, "AUR");
+        finish();
+    }, 120000);
+    readCommand("flatpak", {"remote-ls", "--updates", "--app", "--columns=application,name,version"}, [found, problems, finish, versions](int code, QString output, QString error) {
+        if (code == 0) *found += parseFlatpakUpdates(output, versions);
+        else if (code != -1) problems->append("Flatpak: " + error.trimmed());
+        finish();
+    }, 120000);
 }
 
 void Backend::searchAur(const QString &query, std::function<void(Apps, QString)> done) {

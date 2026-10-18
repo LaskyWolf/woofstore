@@ -1,6 +1,7 @@
 #pragma once
 #include <QByteArray>
 #include <QDate>
+#include <QIcon>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -41,6 +42,7 @@ struct CatalogApp {
     struct Release { QString version; QDate date; QString notes; };
     QList<Release> olderReleases;  // After the latest, newest first; notes are markup
     MetadataOrigin origin = MetadataOrigin::None;
+    QIcon icon;  // Set for installed apps outside the catalogue, which have no icon file to point to
 };
 
 // Popularity signals from Flathub and pkgstats; empty when never downloaded.

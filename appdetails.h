@@ -205,6 +205,7 @@ public:
     PreviewOperations *operations = nullptr;
     QPushButton *install = nullptr, *removeButton = nullptr;
     QToolButton *sourceButton = nullptr;
+    QMenu *sourceMenu = nullptr;
     explicit AppDetailsPage(QWidget *parent = nullptr) : QScrollArea(parent) {
         setWidgetResizable(true); setFrameShape(QFrame::NoFrame);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -220,7 +221,7 @@ public:
         sourceButton->setPopupMode(QToolButton::MenuButtonPopup); sourceButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         connect(sourceButton, &QToolButton::clicked, sourceButton, &QToolButton::showMenu);
         sourceButton->setIcon(QIcon::fromTheme("package-x-generic")); sourceButton->setAccessibleName("Choose source");
-        auto *sources = new QMenu(sourceButton);
+        auto *sources = sourceMenu = new QMenu(sourceButton);
         sourceButton->setMenu(sources); sourceButton->setToolTip("Choose software source"); toolbar->addWidget(sourceButton); outer->addLayout(toolbar);
         connect(back, &QToolButton::clicked, this, [this] { if (onBack) onBack(); });
         auto *shortcut = new QShortcut(QKeySequence("Alt+Left"), this);
@@ -245,7 +246,6 @@ public:
         screenshot = new AppScreenshot; column->addWidget(screenshot);
         galleryControls = new QWidget; galleryLayout = new QHBoxLayout(galleryControls); galleryLayout->setContentsMargins(0, 0, 0, 0); galleryLayout->setSpacing(4); column->addWidget(galleryControls);
         screenshot->onChanged = [this](int index) { for (int i = 0; i < dots.size(); ++i) dots[i]->setChecked(i == index); };
-        noScreenshot = text("No publisher screenshot available."); column->addWidget(noScreenshot);
         auto *changelogPanel = new DetailPanel; changelogPanel->setObjectName("changelogPanel");
         auto *changelogLayout = new QVBoxLayout(changelogPanel); changelogLayout->setContentsMargins(24, 24, 24, 24); changelogLayout->setSpacing(12);
         changelogLayout->addWidget(text("Latest changelog", 16, true));
@@ -281,10 +281,12 @@ public:
     void showApp(const CatalogApp &app, const QString &platform = {}) {
         // Rebind per app; keep progress in the shared preview controller.
         if (installBinding) disconnect(installBinding);
-        if (operations) installBinding = operations->bind(install, app.key, app.name);
+        const bool local = app.key.startsWith("installed:");  // Installed outside the catalogue: nothing to install or switch
+        install->setVisible(!local);
+        if (operations && !local) installBinding = operations->bind(install, app.key, app.name);
         if (removeBinding) disconnect(removeBinding);
         if (operations) removeBinding = operations->bind(removeButton, app.key, app.name, "Remove");
-        auto *menu = sourceButton->menu(); menu->clear();
+        auto *menu = sourceMenu; menu->clear();
         auto *group = new QActionGroup(menu); group->setExclusive(true);
         QStringList labels;
         for (const auto &package : app.packages) {
@@ -304,12 +306,14 @@ public:
         const QString chosen = labels.contains(platform) ? platform : labels.first();
         for (auto *action : menu->actions()) action->setChecked(action->data().toString() == chosen);
         sourceButton->setText(chosen); sourceButton->setEnabled(labels.size() > 1);
+        sourceButton->setMenu(labels.size() > 1 ? sourceMenu : nullptr);  // No choice, no arrow: the style draws it from the popup mode
+        sourceButton->setPopupMode(labels.size() > 1 ? QToolButton::MenuButtonPopup : QToolButton::DelayedPopup);
         currentId = app.key; current = app; title->setText(app.name); summary->setText(app.summary);
         icon->setPixmap(catalogIcon(app).pixmap(96, 96));
         description->setText(readableDescription(app));
         descriptionExpanded = false; updateDescription(); refreshRemove();
+        description->setVisible(!local); if (local) descriptionToggle->hide();  // Outside the catalogue the line under the name is the whole description
         screenshot->setImages({}); screenshot->hide(); galleryControls->hide();
-        noScreenshot->setVisible(app.screenshots.isEmpty() && app.origin != MetadataOrigin::None);
         const QString key = app.key;
         pending.clear();
         for (int i = 0; i < app.screenshots.size(); ++i) {
@@ -525,7 +529,7 @@ private:
     QWidget *galleryControls = nullptr;
     QHBoxLayout *galleryLayout = nullptr;
     QList<CarouselDot *> dots;
-    QLabel *icon = nullptr, *summary = nullptr, *description = nullptr, *noScreenshot = nullptr;
+    QLabel *icon = nullptr, *summary = nullptr, *description = nullptr;
     QLabel *permissionsHeading = nullptr, *permissionNote = nullptr;
     QLabel *releaseVersion = nullptr, *changelog = nullptr;
     QVBoxLayout *olderLayout = nullptr;

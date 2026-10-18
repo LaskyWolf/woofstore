@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include "backend.h"
 #include "catalog.h"
 #include "merge.h"
@@ -252,4 +253,27 @@ int main(int argc, char **argv) {
     const Rankings recent = parseRankings({}, {}, {}, R"({"hits":[{"app_id":"a.b.New"}]})", R"({"hits":[{"app_id":"a.b.Fresh"},{"app_id":"c.d.Fresh"}]})");
     assert(recent.added == QStringList{"a.b.New"} && recent.updated.size() == 2);
     std::puts("Ratings checks: PASS");
+
+    const auto mpvEntry = parseLauncher("/usr/share/applications/mpv.desktop", "[Desktop Entry]\nType=Application\nName=mpv\nName[it]=Lettore mpv\nComment=Video player\nExec=mpv %U\nIcon=mpv\n[Desktop Action x]\nName=Other\n", "it_IT");
+    assert(mpvEntry && mpvEntry->name == "Lettore mpv" && mpvEntry->comment == "Video player" && mpvEntry->id == "mpv" && !mpvEntry->flatpak);
+    assert(parseLauncher("/x/org.a.B.desktop", "[Desktop Entry]\nType=Application\nName=B\nExec=b", "en_US")->flatpak == false);
+    assert(parseLauncher("/v/flatpak/exports/share/applications/org.a.B.desktop", "[Desktop Entry]\nType=Application\nName=B\nExec=b", "en_US")->flatpak);
+    assert(!parseLauncher("/x/h.desktop", "[Desktop Entry]\nType=Application\nName=H\nExec=h\nNoDisplay=true", "en_US"));          // hidden
+    assert(!parseLauncher("/x/l.desktop", "[Desktop Entry]\nType=Link\nName=L\nExec=l", "en_US"));                                 // not an application
+    assert(!parseLauncher("/x/g.desktop", "[Desktop Entry]\nType=Application\nName=G\nOnlyShowIn=GNOME;", "en_US"));               // no Exec, other desktop
+    assert(!parseLauncher("/x/s.desktop", "[Desktop Entry]\nType=Application\nName=Game\nExec=steam steam://rungameid/1", "en_US")); // Steam game
+    const auto updates = parseArchUpdates("systemd  262-1 -> 262.1-1\nnoise line\nlinux  7.2.9-2  ->  7.2.11-1\n", "Arch");
+    assert(updates.size() == 2 && updates[0].name == "systemd" && updates[1].to == "7.2.11-1" && updates[1].source == "Arch");
+    const auto flatpakUpdates = parseFlatpakUpdates("org.a.B\tB\t2.0\norg.a.B\tB\t2.0\norg.c.D\tD\t1.1\n", {{"org.a.B", "1.0"}});
+    assert(flatpakUpdates.size() == 2 && flatpakUpdates[0].from == "1.0" && flatpakUpdates[1].from.isEmpty());
+    auto plain = [](const QString &html) { QString text = html; return text.remove(QRegularExpression("<[^>]*>")); };
+    const auto kernel = versionDiff("7.2.9-2", "7.2.11-1");
+    assert(plain(kernel.first) == "7.2.9-2" && plain(kernel.second) == "7.2.11-1" && kernel.first.startsWith("7.2.<span") && kernel.second.contains(">11-1<"));
+    assert(versionDiff("5.2.9", "5.3.0").second == "5.<span style=\"color:#27ae60; font-weight:600\">3.0</span>");
+    const auto longer = versionDiff("1.10", "1.1");  // Whole numbers change, never half a number
+    assert(longer.first.contains(">10<") && longer.second.contains(">1<"));
+    assert(versionDiff("262.1", "262.1.1").first == "262.1" && versionDiff("262.1", "262.1.1").second.contains(">.1<"));
+    assert(plain(versionDiff("2.5.2-1.1", "2.5.3-1.1").second) == "2.5.3-1.1" && versionDiff("2.5.2-1.1", "2.5.3-1.1").second.contains(">3-1.1<"));
+    assert(versionDiff("2.0", "2.0").first == "2.0");
+    std::puts("Installed and updates checks: PASS");
 }

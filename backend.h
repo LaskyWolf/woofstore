@@ -10,13 +10,27 @@
 #include "ratings.h"
 #include <functional>
 #include <memory>
+#include <optional>
 
 struct App {
-    QString id, name, summary, version, source, remote, scope, branch, base, path, homepage;
+    QString id, name, summary, version, source, remote, scope, branch, base, path, homepage, launcher;
     QIcon icon;
     QUrl screenshot;
 };
 using Apps = QList<App>;
+
+// A menu entry (.desktop file) the user can start.
+struct Launcher { QString id, name, comment, icon, exec, path; bool flatpak = false; };
+// Empty when the entry is hidden, is not an application, is for another desktop, or only starts a Steam game.
+std::optional<Launcher> parseLauncher(const QString &path, const QByteArray &text, const QString &language);
+QList<Launcher> scanLaunchers(const QStringList &dirs, const QString &language);
+
+// Both versions as rich text with only the part that changed coloured: the old one red, the new one green.
+QPair<QString, QString> versionDiff(const QString &from, const QString &to);
+
+struct UpdateEntry { QString id, name, from, to, source; };  // source: Flatpak, Arch or AUR
+QList<UpdateEntry> parseArchUpdates(const QString &text, const QString &source);
+QList<UpdateEntry> parseFlatpakUpdates(const QString &text, const QHash<QString, QString> &installedVersions);
 
 QString plainDescription(const QString &html);
 QString desktopQuote(const QString &path);
@@ -46,6 +60,10 @@ public:
     void cachedGet(const QUrl &url, std::function<void(QByteArray)> done);
     void aurInfo(const QString &name, std::function<void(AurInfo, QString)> done);
     bool installedPackage(const Package &package) const;
+    // Pending updates of Flatpak, repository and AUR packages; the list holds what was found, errors what could not be checked.
+    // Forget the saved web answers and download the rankings and the installed list again.
+    void refresh();
+    void checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> done);
     QSet<QString> nativePackages;  // Installed packages from the sync repos (pacman -Qqn); the Installed page lists only foreign ones
     // Test and preview data in place of the live sources: {apps, rankings, aur}. Emits catalogReady and rankingsReady.
     bool loadFixture(const QString &path);

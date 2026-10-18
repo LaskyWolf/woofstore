@@ -44,23 +44,23 @@ Restart the store after refreshing the catalogue.
 Use the top-left button to collapse or expand the sidebar. Compact mode keeps tooltips and keyboard navigation. The sidebar size is remembered. Settings is currently omitted; source filters remain on Explore.
 
 - **Explore:** every app from Flathub, the pacman repositories (including CachyOS), and the AUR. The same app from several sources is one entry. Search suggests names as you type and ranks results by match and popularity; packages without app metadata appear under Other packages. The home page shows featured apps and one tabbed module with Trending, Popular, New and Updated on Flathub. Rankings refresh daily. The AUR has no equivalent lists in the store; its apps appear through search and the directory.
-- **Installed:** list Flatpaks, foreign Arch packages, and AppImages imported by this store. Foreign packages are labeled **AUR / local** because `pacman -Qm` does not prove AUR origin. Official repository packages are updated by Cachy-Update but are not listed here in this version.
-- **Updates:** check available updates and preview update acceptance. Update all and Review updates open a sample-password popup and simulate progress. These actions do not authorize or start real updates.
+- **Installed:** lists the apps in your application menu, like the Start menu: Flatpaks, Arch packages, AUR/local packages, AppImages and other launchers. Steam game shortcuts are left out. Each row shows a coloured square for its source; the details are in its tooltip. Apps with no catalogue page get a description from the package database or, when nothing else knows them, a web summary.
+- **Updates:** checks Flatpak, repository and AUR updates when the store starts and on demand. A list appears only when something can be updated; otherwise a short message says everything is current. Flatpak apps update from the store. Arch and system packages are listed but update with the system update of a later version.
 - **Activity:** inspect simulated progress and history in a popup. The embedded-terminal demo also supports ordinary and hidden input. No package operation is started by the current file or update preview controls.
 
 ## Local file installation previews
 
-Use Add AppImage, Add Flatpak, or drop local `.AppImage`, `.flatpak`, and `.flatpakref` files anywhere on Installed. Accepted files become clearly labeled preview rows with simulated installation progress. Duplicate paths are suppressed. Unsupported types and remote URLs are rejected. Preview rows survive inventory refresh for the current session.
+Use Add AppImage and Add Flatpak, or drop `.AppImage`, `.flatpak` and `.flatpakref` files on the matching card. The install window is the same as for Explore. AppImages are copied to the store's data folder and added to the app menu. Flatpak files install system-wide.
 
-No files are copied, extracted, executed, or actually installed. Click any Installed row to open the main Explore detail view. Missing publisher metadata uses an explicit unavailable state and a desktop icon fallback.
+Remote URLs and files of the wrong type are rejected. Click any Installed row to open its details page.
 
 ## Update authorization preview
 
-Update all and Review updates open Confirm updates. Enter sample text in the masked field; Accept updates starts simulated progress. Cancel and accept clear the field. No password is sent to sudo, a package manager, or a system authorization service. Check for updates retains its read-only Cachy-Update check.
+Update all and Update start `flatpak update` in the background with the same progress window; the list refreshes afterwards.
 
 ## Installing and removing
 
-Install, Reinstall and Remove run the real package manager in the background, one operation at a time, with a progress window (steps, one status line, "Show details" for the raw output). Passwords come from the system: polkit for `pkexec`, and a KDialog/Zenity prompt for the `sudo` that `pkgctl` uses. AUR builds happen under `~/.cache/WoofStore/aur-build`, not `/tmp`. File drops and Update all stay simulated.
+Install, Reinstall and Remove run the real package manager in the background, one operation at a time, with a progress window (steps, one status line, "Show details" for the raw output). Passwords come from the system: polkit for `pkexec`, and a KDialog/Zenity prompt for the `sudo` that `pkgctl` uses. AUR builds happen under `~/.cache/WoofStore/aur-build`, not `/tmp`.
 
 - **Flatpak:** `flatpak install --system -y <remote> <id>`, no questions asked; the system asks for your password through polkit if needed.
 - **Repository:** `pkexec pacman -S --needed --noconfirm <name>`.
@@ -96,9 +96,9 @@ App cards open a detail page inspired by Flathub: icon, publisher description co
 
 Browse app screenshots with the bar indicators, Left/Right keys, or deliberate dragging. Wheel and trackpad input scroll the page without switching images. Neighboring flat screenshots remain visible while the current image animates into place. Only publisher screenshots are shown.
 
-Installed uses the same compact list as Explore. `--installed-preview` shows sample data and opens only offline app details. Installed row clicks open the main Explore detail view. Remove and Reinstall buttons simulate actions without changing packages.
+Installed uses the same compact list as Explore. `--installed-preview` shows sample data and opens only offline app details. Remove and Reinstall run the real operation for Flatpak, Arch and AUR/local packages; AppImages can be removed, other launchers cannot.
 
-Updates fills the page with available updates. Its bottom action panel contains Update all, Check for updates, and Review updates. Update all and Review updates open the sample-password preview; no real update command runs. `--updates-preview idle`, `checking`, or `failed` captures labeled sample states without starting a check. `--list-selected` previews selection padding. UI checks use sample inventory rather than querying installed packages.
+`--updates-preview idle`, `checking`, `failed` or `available` captures labeled sample states without starting a check. UI checks use sample inventory rather than querying installed packages.
 
 App details and the Explore list have Install buttons that run the real operation (see Installing and removing). The source menu lists real packages; the button installs from the selected one. The checks below use simulated operations. Progress is shared across buttons for the same app during this session.
 
@@ -120,7 +120,7 @@ Back and Show more/less use native button shapes. Pages omit Preview badges and 
 
 Mouse Back and Forward navigate page history. App details opened from Installed return to Installed; Explore details return to the previous Explore position. Forward reopens the app, and opening another page after Back replaces the forward path.
 
-Drag supported local files over Installed to see a full content drop overlay with their formats and filenames. Dropping uses simulated installation. Activity → Clear removes completed history without resetting app installation state.
+Activity → Clear removes completed history without resetting app installation state.
 
 App details include Changelog, Add-ons, Permissions, Ratings, and Links in that order. Ratings show ODRS stars (five or more reviews), Flathub installs, pkgstats share and AUR votes, each with its source; rows without data are hidden. Opening an app sends its Flatpak ID to odrs.gnome.org and flathub.org; answers are cached for a day. Click an add-on row to read its details; Install starts its simulated installation directly. Publisher links open in the default browser. Flathub's packaging disclaimers are left out of descriptions.
 

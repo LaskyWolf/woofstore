@@ -7,6 +7,7 @@
 #include <functional>
 
 static QIcon catalogIcon(const CatalogApp &app) {
+    if (!app.icon.isNull()) return app.icon;
     if (!app.iconPath.isEmpty()) { const QIcon icon(app.iconPath); if (!icon.isNull()) return icon; }
     // A box for bare packages; a generic app icon for apps whose publisher ships none.
     return QIcon::fromTheme(app.origin == MetadataOrigin::None ? "package-x-generic" : "applications-other");
@@ -381,7 +382,7 @@ private:
     bool keyboardFocus = false;
 };
 
-class ExplorePage : public QScrollArea {
+class ExplorePage : public PageScroll {
 public:
     Backend *backend = nullptr;
     QComboBox *source = nullptr, *sort = nullptr;
@@ -400,17 +401,17 @@ public:
     FeaturedCarousel *carousel = nullptr;
     QTimer searchDelay;
     std::function<void(const CatalogApp &)> onOpen;
+    std::function<void()> onRefresh;
     static constexpr int pageSize = 50;
 
-    explicit ExplorePage(Backend *source, QWidget *parent = nullptr) : QScrollArea(parent), backend(source) {
+    explicit ExplorePage(Backend *source, QWidget *parent = nullptr) : PageScroll(parent), backend(source) {
         setWidgetResizable(true); setFrameShape(QFrame::NoFrame);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         auto *body = new QWidget; setWidget(body);
         auto *layout = new QVBoxLayout(body); layout->setContentsMargins(20, 16, 20, 24); layout->setSpacing(16);
-        layout->addWidget(text("Explore", 23, true));
+        buildSearch(layout);
         notice = text(""); notice->setObjectName("exploreNotice"); notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
         notice->hide(); layout->addWidget(notice);
-        buildSearch(layout);
         buildFilters(layout);
         buildCarousel(layout);
         offlineNote = text("Offline: showing saved suggestions."); offlineNote->setObjectName("offlineNote"); offlineNote->hide();
@@ -423,7 +424,8 @@ public:
             if (i == 0) {
                 flathubTabs = new QTabBar; flathubTabs->setObjectName("flathubTabs"); flathubTabs->setExpanding(false); flathubTabs->setDrawBase(false);
                 flathubTabs->setAccessibleName("Flathub lists"); flathubTabs->setFocusPolicy(Qt::StrongFocus);
-                for (const QString &tab : {"Trending", "Popular", "New", "Updated"}) flathubTabs->addTab(tab);
+                flathubTabs->setIconSize(QSize(16, 16));
+                for (const auto &tab : {std::pair{"Trending", "trending"}, {"Popular", "star"}, {"New", "sparkle"}, {"Updated", "refresh"}}) flathubTabs->addTab(lucideIcon(tab.second, 16), tab.first);
                 QFont tabFont = flathubTabs->font(); tabFont.setPointSizeF(tabFont.pointSizeF() + 3); flathubTabs->setFont(tabFont);
                 layout->addWidget(flathubTabs, 0, Qt::AlignHCenter);
                 connect(flathubTabs, &QTabBar::currentChanged, this, [this] { updateSections(); QTimer::singleShot(0, this, [this] { equalize(); }); });
@@ -688,6 +690,7 @@ protected:
     void showEvent(QShowEvent *event) override { QScrollArea::showEvent(event); QTimer::singleShot(0, this, [this] { updateAutoplay(); }); }
     void resizeEvent(QResizeEvent *event) override {
         QScrollArea::resizeEvent(event);
+        placeSearchBar();
         hideHoverPreview();
         carousel->setFixedHeight(viewport()->width() < 650 ? 220 : 246);
         QTimer::singleShot(0, this, [this] { equalize(); });
@@ -718,14 +721,49 @@ private:
         auto *item = new QLabel(value); item->setTextFormat(Qt::PlainText); item->setWordWrap(true);
         QFont font = item->font(); if (size) font.setPointSize(size); font.setBold(bold); item->setFont(font); return item;
     }
+    // The search row sits in the page like any other row, but once the page scrolls past it, it stays at the top.
+    QWidget *searchBar = nullptr, *searchSlot = nullptr;
+    QVBoxLayout *searchBarLayout = nullptr;
+    bool searchStuck = false;
+    void placeSearchBar() {
+        if (!searchBar || !searchSlot) return;
+        const QPoint home = searchSlot->mapTo(viewport(), QPoint(0, 0));
+        const bool stuck = home.y() < 0;
+        if (stuck != searchStuck) {
+            searchStuck = stuck;
+            // A stylesheet replaces the automatic background fill, so the colour is part of it.
+            searchBarLayout->setContentsMargins(stuck ? home.x() : 0, stuck ? 8 : 0, stuck ? home.x() : 0, stuck ? 8 : 0);
+            searchBar->setStyleSheet(stuck ? "#stickyBar { background: palette(window); border-bottom: 1px solid palette(mid); }" : QString());
+        }
+        // Stuck, the bar spans the whole viewport so nothing shows through at the sides.
+        const int extra = stuck ? 16 : 0;
+        if (stuck) searchBar->setGeometry(0, 0, viewport()->width(), searchSlot->height() + extra);
+        else searchBar->setGeometry(home.x(), home.y(), searchSlot->width(), searchSlot->height());
+        searchBar->raise();
+    }
     void buildSearch(QVBoxLayout *layout) {
-        auto *searchRow = new QHBoxLayout;
+        searchBar = new QWidget(viewport()); searchBar->setObjectName("stickyBar"); searchBar->setAutoFillBackground(true);
+        searchBarLayout = new QVBoxLayout(searchBar); searchBarLayout->setContentsMargins(0, 0, 0, 0); searchBarLayout->setSpacing(12);
+        searchBarLayout->addWidget(text("Explore", 23, true));  // The title stays with the search when the page scrolls
+        auto *searchRow = new QHBoxLayout; searchRow->setSpacing(8); searchBarLayout->addLayout(searchRow);
         search = new QLineEdit; search->setObjectName("appSearch"); search->setPlaceholderText("Search apps and packages");
         search->addAction(QIcon::fromTheme("edit-find"), QLineEdit::LeadingPosition); search->setClearButtonEnabled(true);
         search->setMinimumHeight(38); search->setAccessibleName("Search apps and packages"); searchRow->addWidget(search, 1);
         auto *completer = new QCompleter(&suggestions, this);
         completer->setCaseSensitivity(Qt::CaseInsensitive); completer->setFilterMode(Qt::MatchContains); completer->setMaxVisibleItems(8);
         search->setCompleter(completer);
+        // The suggestions line up with the typed text, not with the search icon. The popup itself cannot be moved on Wayland, so each row is indented.
+        struct Indent : QStyledItemDelegate {
+            QLineEdit *field;
+            Indent(QLineEdit *edit, QObject *parent) : QStyledItemDelegate(parent), field(edit) {}
+            void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
+                int textStart = 0;  // Right edge of the icon at the left of the field,
+                for (auto *button : field->findChildren<QToolButton *>()) if (button->isVisible() && button->geometry().center().x() < field->width() / 2) textStart = qMax(textStart, button->geometry().right());
+                QStyleOptionViewItem shifted = option; shifted.rect.setLeft(option.rect.left() + textStart);
+                QStyledItemDelegate::paint(painter, shifted, index);
+            }
+        };
+        completer->popup()->setItemDelegate(new Indent(search, completer->popup()));
         connect(completer, qOverload<const QString &>(&QCompleter::activated), this, [this] { applyFilters(); });
         // Wait for a pause in typing: one search per word instead of one per key.
         searchDelay.setParent(this); searchDelay.setSingleShot(true); searchDelay.setInterval(150);
@@ -733,8 +771,16 @@ private:
         connect(search, &QLineEdit::textChanged, &searchDelay, qOverload<>(&QTimer::start));
         connect(search, &QLineEdit::returnPressed, this, [this] { applyFilters(); });
         filters = new QToolButton; filters->setIcon(QIcon::fromTheme("view-filter")); filters->setText("Filters"); filters->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); filters->setCheckable(true);
-        filters->setMinimumHeight(38); filters->setAccessibleName("Show or hide filters and categories"); searchRow->addWidget(filters);
-        layout->addLayout(searchRow);
+        filters->setAutoRaise(true); filters->setMinimumHeight(38); filters->setAccessibleName("Show or hide filters and categories"); searchRow->addWidget(filters);
+        auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshExplore");
+        refresh->setFlat(true); refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the catalogue"); refresh->setAccessibleName("Refresh the catalogue"); refresh->setCursor(Qt::PointingHandCursor);
+        connect(refresh, &QPushButton::clicked, this, [this] { if (onRefresh) onRefresh(); });
+        searchRow->addWidget(refresh);
+        searchSlot = new QWidget; searchSlot->setFixedHeight(searchBar->sizeHint().height()); layout->addWidget(searchSlot);
+        searchSlot->installEventFilter(new EventHook(this, [this](QObject *, QEvent *event) {
+            if (event->type() == QEvent::Move || event->type() == QEvent::Resize || event->type() == QEvent::Show) placeSearchBar();
+        }));
+        connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { placeSearchBar(); });
     }
     void buildFilters(QVBoxLayout *layout) {
         filterPanel = new QWidget; auto *filterLayout = new QVBoxLayout(filterPanel); filterLayout->setContentsMargins(0, 0, 0, 0); filterLayout->setSpacing(12);
@@ -763,8 +809,18 @@ private:
                 category = checked ? name : QString(); applyFilters();
             });
         }
-        filterLayout->addLayout(categories); layout->addWidget(filterPanel);
+        filterLayout->addLayout(categories); searchBarLayout->addWidget(filterPanel);  // Part of the sticky zone with the search row
         filterPanel->hide();
+        // The placeholder in the page is as tall as the whole zone, so the content below makes room for the filters.
+        filterPanel->installEventFilter(new EventHook(this, [this](QObject *, QEvent *event) {
+            if (event->type() != QEvent::Show && event->type() != QEvent::Hide && event->type() != QEvent::Resize) return;
+            QTimer::singleShot(0, this, [this] {
+                searchBar->layout()->activate();
+                const int wanted = searchBar->sizeHint().height();
+                if (searchSlot->height() != wanted) searchSlot->setFixedHeight(wanted);
+                placeSearchBar();
+            });
+        }));
         filterMotion.setParent(this); filterMotion.setObjectName("filterMotion"); filterMotion.setEasingCurve(QEasingCurve::OutCubic);
         connect(&filterMotion, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) { filterPanel->setFixedHeight(value.toInt()); });
         connect(&filterMotion, &QVariantAnimation::finished, this, [this] {

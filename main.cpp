@@ -177,11 +177,14 @@ public:
         history.append({pages->currentWidget()}); historyIndex = 0;
         appDetails->backend = &backend;
         explore->onOpen = [this](const CatalogApp &app) { openDetails(app); };
+        explore->onRefresh = [this] { if (inventoryEnabled) backend.refresh(); };
         appDetails->onBack = [this] { moveHistory(-1); };
         appDetails->onOpenAddon = [this](const CatalogApp &app) { openDetails(app); };
         qApp->installEventFilter(this);
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
-        connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); settleOperation(); previewOperations.refreshButtons(); appDetails->refreshRemove(); });
+        connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); settleOperation(); previewOperations.refreshButtons(); appDetails->refreshRemove();
+            if (inventoryEnabled && !updatesChecked) checkForUpdates();  // Once at start, when the installed list is known
+        });
         connect(&backend, &Backend::issue, this, [this](const QString &message) {
             statusBar()->showMessage(message);
         });
@@ -222,9 +225,12 @@ public:
     void previewUpdates(const QString &state) {
         selectPage(2);
         statusBar()->clearMessage();
-        updateAll->setEnabled(state != "checking"); checkUpdates->setEnabled(state != "checking"); findChild<QPushButton *>("runUpdates")->setEnabled(state != "checking"); updateStatus->setText("Not checked"); updateList->clear();
-        if (state == "checking") { checkUpdates->setEnabled(false); updateStatus->setText("Checking…"); updateList->setPlainText("Checking system, AUR, and Flatpak updates…"); }
-        if (state == "failed") { updateStatus->setText("Check failed"); updateList->setPlainText("No installation started. Try checking again.\n\nSample: package service unavailable."); }
+        pendingUpdates.clear(); updateProblems.clear(); updateChecking = state == "checking"; updatesChecked = state != "checking";
+        lastUpdateCheck = QTime(9, 41);
+        if (state == "failed") updateProblems = {"Flatpak: the remote is not reachable."};
+        if (state == "available") pendingUpdates = {{"org.kde.krita", "Krita", "5.2.9", "5.3.0", "Flatpak"}, {"org.gimp.GIMP", "GIMP", "3.0.4", "3.0.6", "Flatpak"},
+            {"systemd", "systemd", "262-1", "262.1-1", "Arch"}, {"linux-cachyos", "linux-cachyos", "7.2.9-2", "7.2.11-1", "Arch"}};
+        refreshUpdates();
     }
     void previewListSelection() {
         auto *list = pages->currentWidget() == explore ? explore->results : installedList;
@@ -280,58 +286,40 @@ public:
         activityButton->busy = busy() || previewOperations.running(); activityButton->indeterminate = busy();
         activityButton->progress = previewOperations.activities.isEmpty() ? 0 : previewOperations.progress();
         activityButton->setToolTip(busy() ? "Package activity running · progress unavailable" : previewOperations.running() ? QString("Activity · %1%").arg(activityButton->progress) : "Show activity");
-        const auto *updates = previewOperations.latest("preview-system-updates");
-        const bool updating = updates && updates->progress < 100;
-        if (updating || previewUpdateRunning) {
-            updateAll->setText(updating ? "Updating…" : "Update all"); updateAll->setEnabled(!updating);
-            checkUpdates->setEnabled(!updating); findChild<QPushButton *>("runUpdates")->setEnabled(!updating);
-            updateStatus->setText(updating ? "Updating…" : "Complete");
-            if (!updating) updateList->appendPlainText("Complete · no system changes.");
-            previewUpdateRunning = updating;
-        }
         activityButton->update();
     }
 
-    void previewFiles(const QList<QUrl> &files) {
-        int added = 0, skipped = 0;
-        for (const auto &url : files) {
-            if (!FileDropPage::accepts(url)) { statusBar()->showMessage("Choose a local AppImage, .flatpak, or .flatpakref file."); continue; }
-            const QFileInfo file(url.toLocalFile()); const QString path = file.canonicalFilePath();
-            bool duplicate = false;
-            for (const auto &existing : filePreviews) if (existing.path == path) duplicate = true;
-            if (duplicate) { ++skipped; continue; }
-            App app; app.path = path; app.id = "preview-file-" + QString::fromLatin1(QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex());
-            app.name = file.completeBaseName(); app.source = file.suffix().compare("appimage", Qt::CaseInsensitive) == 0 ? "AppImage" : "Flatpak";
-            app.remote = "local file"; app.scope = "local"; app.summary = "File installation · no package changes";
-            app.icon = QIcon::fromTheme("application-x-executable"); filePreviews.append(app);
-            previewOperations.start(app.id, app.name, "Install"); ++added;
-        }
-        if (!added && skipped) statusBar()->showMessage("These files are already in the list.");
-        if (added) {
-            installedSearch->clear(); installedFilter->setCurrentIndex(0); renderInstalled();
-            statusBar()->showMessage(QString("%1 file(s) added · no package changes").arg(added));
+    static bool acceptsFile(const QString &kind, const QUrl &url) {
+        if (!url.isLocalFile()) return false;
+        const QFileInfo file(url.toLocalFile()); const QString suffix = file.suffix().toLower();
+        if (!file.isFile() || !file.isReadable()) return false;
+        return kind == "AppImage" ? suffix == "appimage" : suffix == "flatpak" || suffix == "flatpakref";
+    }
+    // The same progress window as every other install; AppImages are copied by a helper run of this program, off the interface thread.
+    void installFiles(const QString &kind, const QList<QUrl> &urls) {
+        QStringList files;
+        for (const auto &url : urls) if (acceptsFile(kind, url)) files << QFileInfo(url.toLocalFile()).canonicalFilePath();
+        if (files.isEmpty()) { QMessageBox::information(this, "Add " + kind, kind == "AppImage" ? "Choose a .AppImage file." : "Choose a .flatpak or .flatpakref file."); return; }
+        const QString title = "Install " + (files.size() == 1 ? QFileInfo(files[0]).completeBaseName() : QString("%1 files").arg(files.size()));
+        if (kind == "AppImage") {
+            QStringList arguments; for (const QString &file : files) arguments << "--import-appimage" << file;
+            startJob(title, QCoreApplication::applicationFilePath(), arguments, {}, {"Prepare", "Copy", "Add to menu"},
+                [](const QString &text) { return text.contains("Adding to the app menu") ? 2 : text.contains("Copying") ? 1 : 0; });
+        } else {
+            const QString script = "for f in \"$@\"; do case \"$f\" in *.flatpakref) flatpak install --system -y --noninteractive --from \"$f\";; "
+                "*) flatpak install --system -y --noninteractive --bundle \"$f\";; esac || exit; done";
+            startJob(title, "bash", QStringList{"-c", script, "woof-store-flatpak-files"} + files);
         }
     }
-    void showUpdateAuthorization() {
-        if (const auto *last = previewOperations.latest("preview-system-updates"); last && last->progress < 100) { showActivity(); return; }
-        if (updateAuthorization) { updateAuthorization->show(); updateAuthorization->raise(); return; }
-        auto *dialog = new QDialog(this); updateAuthorization = dialog; dialog->setObjectName("updateAuthorization");
-        dialog->setAttribute(Qt::WA_DeleteOnClose); dialog->setModal(true); dialog->setWindowTitle("Confirm updates"); dialog->resize(420, 220);
-        auto *layout = new QVBoxLayout(dialog); layout->setContentsMargins(20, 16, 20, 20); layout->setSpacing(16);
-        layout->addWidget(label("Confirm updates", 18, true));
-        layout->addWidget(label("Enter sample text. No system authorization occurs."));
-        auto *password = new QLineEdit; password->setObjectName("previewPassword"); password->setEchoMode(QLineEdit::Password);
-        password->setPlaceholderText("Sample password"); password->setAccessibleName("Sample password"); password->setMinimumHeight(36); layout->addWidget(password);
-        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel | QDialogButtonBox::Ok);
-        auto *accept = buttons->button(QDialogButtonBox::Ok); accept->setText("Accept updates"); accept->setObjectName("acceptPreviewUpdates"); accept->setEnabled(false); layout->addWidget(buttons);
-        connect(password, &QLineEdit::textChanged, accept, [accept](const QString &value) { accept->setEnabled(!value.isEmpty()); });
-        connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
-        connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
-        connect(dialog, &QDialog::accepted, this, [this, password] {
-            password->clear(); previewOperations.start("preview-system-updates", "System updates", "Update");
-        });
-        connect(dialog, &QDialog::finished, password, [password] { password->clear(); });
-        dialog->show(); password->setFocus();
+    void removeAppImage(const App &app) {
+        if (QMessageBox::question(this, "Remove " + app.name, "This deletes the AppImage file:\n" + app.path) != QMessageBox::Yes) return;
+        const QString data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        bool ok;
+        if (app.path.startsWith(data + "/WoofStore/appimages/")) ok = QFile::remove(app.path);
+        else ok = QFile::moveToTrash(app.path);  // A file the user keeps elsewhere goes to the trash, not away for good
+        if (ok && app.launcher.startsWith(QDir::homePath())) QFile::remove(app.launcher);
+        if (!ok) QMessageBox::warning(this, "Cannot remove " + app.name, "The file could not be deleted: " + app.path);
+        backend.loadInstalled();
     }
 
     // closeOnSuccess: package operations close themselves when they succeed; a failure keeps the output until Enter.
@@ -374,7 +362,9 @@ public:
         if (appIndex.contains(key)) *app = backend.apps[appIndex.value(key)];
         else if (const auto *row = installedRow(key)) {  // A row of the Installed page: package name or Flatpak ID
             app->key = key; app->name = row->name;
-            app->packages = {{row->source == "Flatpak" ? Source::Flatpak : Source::Aur, row->id, row->source == "Flatpak" ? row->remote : QString("aur"), row->version, 0}};
+            if (row->source != "Flatpak" && row->source != "Arch" && row->source != "AUR / local") return false;  // AppImages and other apps have no package to operate on
+            const Source kind = row->source == "Flatpak" ? Source::Flatpak : row->source == "Arch" ? Source::Repo : Source::Aur;
+            app->packages = {{kind, row->id, kind == Source::Flatpak ? row->remote : kind == Source::Repo ? QString("arch") : QString("aur"), row->version, 0}};
         } else if (key.startsWith("aur:")) { app->key = key; app->name = key.mid(4); app->packages = {{Source::Aur, key.mid(4), "aur", {}, 0}}; }
         else return false;
         if (app->packages.isEmpty()) return false;
@@ -398,6 +388,7 @@ public:
         return false;
     }
     void openInstalled(const QString &key, const QString &name) {
+        if (const auto *row = installedRow(key); row && !row->launcher.isEmpty() && !QStandardPaths::findExecutable("gio").isEmpty()) { QProcess::startDetached("gio", {"launch", row->launcher}); return; }
         CatalogApp app; Package package;
         if (!resolveOperation(key, &app, &package)) return;
         for (const auto &candidate : app.packages) if (backend.installedPackage(candidate)) package = candidate;
@@ -456,6 +447,7 @@ public:
             lastResult = ok ? 1 : 2;
             refreshActivity();
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
+            if (inventoryEnabled && title.startsWith("Update")) QTimer::singleShot(0, this, &Store::checkForUpdates);
         });
         // setsid: no controlling terminal, so sudo uses the askpass dialog; -w keeps the exit code.
         process->start("setsid", QStringList{"-w", executable} + arguments);
@@ -470,6 +462,10 @@ public:
     }
     // Starts the real operation for a button. false = not a catalogue app, the caller keeps the simulation.
     bool runOperation(const QString &key, const QString &name, const QString &action) {
+        if (const auto *row = installedRow(key); row && row->source == "AppImage") {  // Files, not packages
+            if (action == "Remove") removeAppImage(*row);
+            return true;
+        }
         CatalogApp app; Package package;
         if (!resolveOperation(key, &app, &package)) return false;
         if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return true; }
@@ -587,9 +583,7 @@ private:
     QSettings settings;
     QWidget *sidebar = nullptr;
     QFrame *sidebarDivider = nullptr;
-    QPointer<QDialog> updateAuthorization;
-    bool previewUpdateRunning = false;
-    Apps filePreviews, displayedInstalled;
+    Apps displayedInstalled;
     QAction *compactSidebar = nullptr;
     QVariantAnimation sidebarMotion;
     QButtonGroup *navigation = nullptr;
@@ -674,9 +668,17 @@ private:
     QVBoxLayout *terminalLayout = nullptr;
     QWidget *terminalHost = nullptr;
     QLabel *activityTitle = nullptr, *activityStatus = nullptr;
-    QPlainTextEdit *updateList = nullptr;
-    QLabel *updateStatus = nullptr;
+    QLineEdit *updateStatus = nullptr;
+    QLabel *updatesIcon = nullptr, *updatesTitle = nullptr, *updatesHint = nullptr;
     QPushButton *checkUpdates = nullptr;
+    QWidget *updatesEmpty = nullptr, *updatesPanel = nullptr;
+    QVBoxLayout *updatesRows = nullptr;
+public:
+    QList<UpdateEntry> pendingUpdates;  // Found by the last check
+    QStringList updateProblems;
+    bool updateChecking = false, updatesChecked = false;
+    QTime lastUpdateCheck;
+private:
     QPointer<KParts::ReadOnlyPart> part;
     QPointer<QProcess> job;  // A package operation running in the background, shown by jobDialog
     QPointer<JobDialog> jobDialog;
@@ -688,7 +690,7 @@ private:
     bool settling = false;
 
     QWidget *scrollPage(QVBoxLayout **content, QScrollArea *supplied = nullptr) {
-        auto *scroll = supplied ? supplied : new QScrollArea;
+        auto *scroll = supplied ? supplied : new PageScroll;
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
         auto *body = new QWidget;
@@ -710,20 +712,12 @@ private:
 
     void buildInstalled() {
         QVBoxLayout *content;
-        auto *dropPage = new FileDropPage; dropPage->setObjectName("installedDropPage");
-        dropPage->onFiles = [this](const QList<QUrl> &files) { previewFiles(files); };
-        installedBody = scrollPage(&content, dropPage);
+        installedBody = scrollPage(&content);
         installedBody->setObjectName("installedPageBody");
+        pages->widget(pages->count() - 1)->setObjectName("installedPage");
         content->setContentsMargins(20, 16, 20, 24); content->setSpacing(16);
-        auto *row = new QHBoxLayout;
-        row->addWidget(label("Installed", 23, true), 1);
-        auto *import = button("Add AppImage", "list-add");
-        import->setObjectName("addAppImage");
-        row->addWidget(import);
-        auto *addFlatpak = button("Add Flatpak", "list-add"); addFlatpak->setObjectName("addFlatpak"); row->addWidget(addFlatpak);
-        auto *refresh = button("Refresh", "view-refresh");
-        row->addWidget(refresh);
-        content->addLayout(row);
+        auto *sticky = new StickyBar(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content);
+        sticky->column->addWidget(label("Installed", 23, true));
         auto *searchTray = new QWidget;
         auto *searchRow = new QHBoxLayout(searchTray);
         searchRow->setContentsMargins(0, 0, 0, 0);
@@ -735,79 +729,148 @@ private:
         installedSearch->addAction(QIcon::fromTheme("edit-find"), QLineEdit::LeadingPosition);
         installedSearch->setAccessibleName("Search installed software");
         installedFilter = new QComboBox; installedFilter->setObjectName("installedFilter");
-        installedFilter->addItems({"All sources", "Flatpak", "AUR / local", "AppImage"});
-        installedFilter->setMinimumHeight(32);
+        installedFilter->addItems({"All sources", "Flatpak", "Arch", "AUR / local", "AppImage", "Other"});
+        installedFilter->setMinimumHeight(38);
         installedFilter->setAccessibleName("Installed software source");
+        auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshInstalled");
+        refresh->setFlat(true); refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the list"); refresh->setAccessibleName("Refresh installed software"); refresh->setCursor(Qt::PointingHandCursor);
         searchRow->addWidget(installedSearch, 1);
         searchRow->addWidget(installedFilter);
-        content->addWidget(searchTray);
+        searchRow->addWidget(refresh);
+        sticky->column->addWidget(searchTray);
+        auto chooseFiles = [this](const QString &kind) {
+            const auto files = QFileDialog::getOpenFileNames(this, "Add " + kind, QDir::homePath(), kind == "AppImage" ? "AppImages (*.AppImage *.appimage)" : "Flatpak files (*.flatpak *.flatpakref)");
+            QList<QUrl> urls; for (const auto &file : files) urls.append(QUrl::fromLocalFile(file));
+            if (!urls.isEmpty()) installFiles(kind, urls);
+        };
+        auto *cards = new QHBoxLayout; cards->setSpacing(16);
+        for (const QString kind : {"AppImage", "Flatpak"}) {
+            auto *card = new DropCard("Add " + kind, kind, kind == "AppImage" ? "Drop a file here or click to choose" : "Drop a .flatpak or .flatpakref file here");
+            card->setObjectName("add" + kind);
+            card->accepts = [kind](const QUrl &url) { return acceptsFile(kind, url); };
+            card->onFiles = [this, kind](const QList<QUrl> &files) { installFiles(kind, files); };
+            connect(card, &QAbstractButton::clicked, this, [chooseFiles, kind] { chooseFiles(kind); });
+            cards->addWidget(card, 1);
+        }
+        sticky->column->addLayout(cards);
+        sticky->fit();
         installedLabel = label("Loading installed software…", 0, true);
         content->addWidget(installedLabel);
         installedList = new AppList; installedList->setObjectName("installedApps"); installedList->setAccessibleName("Installed apps, alphabetically sorted"); content->addWidget(installedList);
-        installedEmpty = label("Drop an AppImage or Flatpak file here, or use Add AppImage / Add Flatpak."); content->addWidget(installedEmpty); installedEmpty->hide();
+        installedEmpty = label("No installed app matches."); content->addWidget(installedEmpty); installedEmpty->hide();
         connect(installedList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) { openInstalledItem(item); });
         connect(installedList, &QListWidget::itemActivated, this, [this](QListWidgetItem *item) { openInstalledItem(item); });
         content->addStretch();
         connect(installedSearch, &QLineEdit::textChanged, this, &Store::renderInstalled);
         connect(installedFilter, &QComboBox::currentIndexChanged, this, &Store::renderInstalled);
         connect(refresh, &QPushButton::clicked, &backend, &Backend::loadInstalled);
-        auto chooseFiles = [this](const QString &title, const QString &filter) {
-            const auto files = QFileDialog::getOpenFileNames(this, title, QDir::homePath(), filter);
-            QList<QUrl> urls; for (const auto &file : files) urls.append(QUrl::fromLocalFile(file));
-            previewFiles(urls);
-        };
-        import->setToolTip("Add an AppImage · no file changes");
-        addFlatpak->setToolTip("Add a Flatpak · no package changes");
-        connect(import, &QPushButton::clicked, this, [chooseFiles] { chooseFiles("Add AppImage", "AppImages (*.AppImage *.appimage)"); });
-        connect(addFlatpak, &QPushButton::clicked, this, [chooseFiles] { chooseFiles("Add Flatpak", "Flatpak files (*.flatpak *.flatpakref)"); });
     }
 
+    // Updates: a list only when there is something to update, otherwise a short positive message.
     void buildUpdates() {
         QVBoxLayout *content;
         auto *body = scrollPage(&content); body->setObjectName("updatesPageBody");
         content->setContentsMargins(20, 16, 20, 24); content->setSpacing(16);
-        auto *heading = new QHBoxLayout;
-        heading->addWidget(label("Updates", 23, true), 1);
-        checkUpdates = button("Check for updates", "view-refresh"); checkUpdates->setObjectName("checkUpdates");
-        auto *update = button("Review & update", "system-software-update"); update->setObjectName("runUpdates");
-        content->addLayout(heading);
-        auto *results = new DetailPanel; results->setObjectName("updateResults");
-        auto *resultsLayout = new QVBoxLayout(results); resultsLayout->setContentsMargins(14, 14, 14, 14); resultsLayout->setSpacing(12);
-        auto *resultsHeading = new QHBoxLayout; resultsHeading->addWidget(label("Available updates", 12, true), 1);
-        updateStatus = label("Not checked"); updateStatus->setObjectName("updateStatus"); resultsHeading->addWidget(updateStatus); resultsLayout->addLayout(resultsHeading);
-        updateList = new QPlainTextEdit; updateList->setObjectName("updateOutput"); updateList->setReadOnly(true); updateList->setFrameShape(QFrame::NoFrame);
-        updateList->setStyleSheet("QPlainTextEdit { background: transparent; border: none; }");
-        updateList->setAccessibleName("Available updates"); updateList->setPlaceholderText("Check for updates to see available packages."); updateList->setMinimumHeight(220);
-        resultsLayout->addWidget(updateList, 1); content->addWidget(results, 1);
-        auto *actions = new DetailPanel; actions->setObjectName("updateActions");
-        auto *actionsLayout = new QVBoxLayout(actions); actionsLayout->setContentsMargins(14, 14, 14, 14); actionsLayout->setSpacing(10);
-        updateAll = button("Update all", "system-software-update"); updateAll->setObjectName("updateAll"); updateAll->setMinimumHeight(44); updateAll->setDefault(true);
-        update->setText("Review updates");
-        auto *actionsRow = new QHBoxLayout; actionsRow->addWidget(checkUpdates); actionsRow->addWidget(update);
-        actionsLayout->addWidget(updateAll); actionsLayout->addLayout(actionsRow); content->addWidget(actions);
-        connect(checkUpdates, &QPushButton::clicked, this, [this, update] {
-            if (busy()) { showActivity(); return; }
-            checkUpdates->setEnabled(false); update->setEnabled(false); updateAll->setEnabled(false);
-            updateStatus->setText("Checking…");
-            updateList->setPlainText("Checking system, AUR, and Flatpak updates…");
-            backend.readCommand("arch-update", {"--list"}, [this, update](int code, QString output, QString error) {
-                checkUpdates->setEnabled(true); update->setEnabled(true); updateAll->setEnabled(true);
-                static const QRegularExpression ansi("\\x1b\\[[0-?]*[ -/]*[@-~]");
-                output.remove(ansi);
-                if (code == 0 || code == 7) {
-                    updateStatus->setText("Check complete"); updateList->setPlainText(output.trimmed());
-                    updateList->setPlaceholderText("No updates reported.");
-                } else {
-                    updateStatus->setText("Check failed");
-                    updateList->setPlainText("No installation started. Try checking again.\n\n" + error + '\n' + output);
+        auto *sticky = new StickyBar(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content);
+        sticky->column->addWidget(label("Updates", 23, true));
+        // Same place as the search row of Installed: what the last check found, and the button to run it again.
+        auto *statusRow = new QHBoxLayout; statusRow->setSpacing(8);
+        updateStatus = new QLineEdit; updateStatus->setObjectName("updateStatus"); updateStatus->setReadOnly(true);  // Looks like the search bar of Installed
+        updateStatus->setFocusPolicy(Qt::NoFocus); updateStatus->setMinimumHeight(38); updateStatus->setCursor(Qt::ArrowCursor);
+        checkUpdates = new QPushButton(lucideIcon("refresh", 20), {}); checkUpdates->setObjectName("checkUpdates");
+        checkUpdates->setFlat(true); checkUpdates->setFixedSize(38, 38); checkUpdates->setToolTip("Check for updates"); checkUpdates->setAccessibleName("Check for updates"); checkUpdates->setCursor(Qt::PointingHandCursor);
+        statusRow->addWidget(updateStatus, 1); statusRow->addWidget(checkUpdates);
+        sticky->column->addLayout(statusRow);
+        sticky->fit();
+        updatesEmpty = new QWidget; updatesEmpty->setObjectName("updatesEmpty"); updatesEmpty->setMinimumHeight(340);
+        auto *emptyLayout = new QVBoxLayout(updatesEmpty); emptyLayout->setSpacing(10); emptyLayout->setAlignment(Qt::AlignCenter);
+        updatesIcon = new QLabel; updatesIcon->setAlignment(Qt::AlignCenter);
+        updatesTitle = label("", 18, true); updatesTitle->setObjectName("updatesTitle"); updatesTitle->setAlignment(Qt::AlignCenter);
+        updatesHint = label(""); updatesHint->setObjectName("updatesHint"); updatesHint->setAlignment(Qt::AlignCenter); updatesHint->setMinimumWidth(380); updatesHint->setForegroundRole(QPalette::PlaceholderText);
+        for (QWidget *part : {static_cast<QWidget *>(updatesIcon), static_cast<QWidget *>(updatesTitle), static_cast<QWidget *>(updatesHint)}) emptyLayout->addWidget(part);
+        content->addWidget(updatesEmpty, 1);
+        updatesPanel = new QWidget; updatesPanel->setObjectName("updateResults");
+        updatesRows = new QVBoxLayout(updatesPanel); updatesRows->setContentsMargins(0, 0, 0, 0); updatesRows->setSpacing(16);
+        content->addWidget(updatesPanel); content->addStretch();
+        updateAll = new QPushButton(QIcon::fromTheme("system-software-update"), "Update all"); updateAll->setObjectName("updateAll");
+        updateAll->setMinimumHeight(44); updateAll->setDefault(true); updateAll->setCursor(Qt::PointingHandCursor);
+        new StickyFooter(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content, updateAll);
+        connect(checkUpdates, &QPushButton::clicked, this, &Store::checkForUpdates);
+        connect(updateAll, &QPushButton::clicked, this, [this] { startJob("Update apps", "flatpak", {"update", "-y", "--noninteractive"}); });
+        refreshUpdates();
+    }
+
+    void checkForUpdates() {
+        if (updateChecking) return;
+        updateChecking = true; refreshUpdates();
+        backend.checkUpdates([this](QList<UpdateEntry> found, QStringList problems) {
+            updateChecking = false; updatesChecked = true; lastUpdateCheck = QTime::currentTime();
+            pendingUpdates = found; updateProblems = problems;
+            refreshUpdates();
+        });
+    }
+
+    void refreshUpdates() {
+        checkUpdates->setEnabled(!updateChecking);
+        updateStatus->setText(updateChecking ? "Checking…" : updatesChecked ? "Checked at " + lastUpdateCheck.toString("HH:mm") : QString());
+        const bool listed = !pendingUpdates.isEmpty();
+        updatesPanel->setVisible(listed); updatesEmpty->setVisible(!listed); updateAll->setVisible(listed);
+        static_cast<NavButton *>(navigation->button(2))->badge = int(pendingUpdates.size()); navigation->button(2)->update();
+        if (!listed) {
+            const bool failed = updatesChecked && !updateProblems.isEmpty();
+            QString glyph = "circle-check"; QColor color("#27ae60");
+            if (updateChecking) { glyph = "refresh"; color = palette().color(QPalette::PlaceholderText); updatesTitle->setText("Checking for updates…"); updatesHint->setText({}); }
+            else if (failed) { glyph = "circle-x"; color = QColor("#da4453"); updatesTitle->setText("Couldn't check for updates"); updatesHint->setText(updateProblems.join('\n')); }
+            else if (!updatesChecked) { updatesTitle->setText("Updates haven't been checked yet"); updatesHint->setText("Use the refresh button above."); glyph = "refresh"; color = palette().color(QPalette::PlaceholderText); }
+            else { updatesTitle->setText("You're all up to date"); updatesHint->setText("Your apps and system packages are current."); }
+            QPixmap pixmap(144, 144); pixmap.setDevicePixelRatio(2); pixmap.fill(Qt::transparent);
+            QPainter painter(&pixmap); drawLucide(painter, glyph, QRectF(0, 0, 72, 72), color, 1.4); painter.end();
+            updatesIcon->setPixmap(pixmap);
+            return;
+        }
+        while (auto *item = updatesRows->takeAt(0)) { delete item->widget(); delete item; }
+        // Apps: Flatpaks, and Arch packages that have a menu entry. Everything else is system.
+        QList<UpdateEntry> apps, system; QHash<QString, const App *> installedById;
+        for (const auto &installed : backend.installed) if (installed.source == "Arch" || installed.source == "AUR / local") installedById.insert(installed.id, &installed);
+        for (const auto &entry : pendingUpdates) (entry.source == "Flatpak" || installedById.contains(entry.id) ? apps : system).append(entry);
+        int flatpaks = 0; for (const auto &entry : apps) if (entry.source == "Flatpak") ++flatpaks;
+        auto group = [this, &installedById](const QString &title, const QList<UpdateEntry> &entries, const QString &name) {
+            if (entries.isEmpty()) return;
+            updatesRows->addWidget(label(QString("%1 · %2").arg(title).arg(entries.size()), 0, true));
+            auto *panel = new QFrame; panel->setObjectName(name);
+            panel->setStyleSheet("QFrame { background: palette(alternate-base); border-radius: 10px; } QLabel { background: transparent; }");
+            auto *rows = new QVBoxLayout(panel); rows->setContentsMargins(14, 10, 14, 10); rows->setSpacing(4);
+            for (const auto &entry : entries) {
+                const App *known = entry.source == "Flatpak" ? nullptr : installedById.value(entry.id, nullptr);
+                QIcon icon = QIcon::fromTheme(entry.source == "Flatpak" ? entry.id : "package-x-generic", QIcon::fromTheme(entry.source == "Flatpak" ? "application-x-executable" : "package-x-generic"));
+                if (entry.source == "Flatpak") { for (const auto &installed : backend.installed) if (installed.id == entry.id && !installed.icon.isNull()) icon = installed.icon; }
+                else if (known && !known->icon.isNull()) icon = known->icon;
+                auto *row = new QWidget; row->setObjectName("updateRow"); auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 6, 0, 6); layout->setSpacing(12);
+                auto *symbol = new QLabel; symbol->setFixedSize(40, 40); symbol->setPixmap(icon.pixmap(40, 40));
+                auto *copy = new QVBoxLayout; copy->setSpacing(2);
+                auto *title = label(known ? known->name : entry.name, 0, true);
+                const auto change = versionDiff(entry.from, entry.to);
+                auto *version = label(entry.from.isEmpty() ? "Version " + entry.to : QString()); version->setForegroundRole(QPalette::PlaceholderText);
+                if (!entry.from.isEmpty()) { version->setTextFormat(Qt::RichText); version->setText(change.first + "&nbsp;&nbsp;→&nbsp;&nbsp;" + change.second); }
+                copy->addWidget(title); copy->addWidget(version);
+                layout->addWidget(symbol); layout->addLayout(copy, 1);
+                if (entry.source == "Flatpak" || known) {
+                    auto *update = new QPushButton(QIcon::fromTheme("system-software-update"), "Update"); update->setMinimumHeight(34); update->setCursor(Qt::PointingHandCursor);
+                    if (entry.source == "Flatpak") {
+                        update->setObjectName("updateOne");
+                        connect(update, &QPushButton::clicked, this, [this, entry] { startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id}); });
+                    } else { update->setEnabled(false); update->setToolTip("This package updates with the system update, which arrives in the next version."); }
+                    layout->addWidget(update);
                 }
-            }, 120000);
-        });
-        connect(update, &QPushButton::clicked, this, [this] {
-            if (!checkUpdates->isEnabled()) { QMessageBox::information(this, "Update check running", "Wait for the current update check to finish."); return; }
-            showUpdateAuthorization();
-        });
-        connect(updateAll, &QPushButton::clicked, update, &QPushButton::click);
+                layout->addWidget(new SourceBadge(entry.source));
+                rows->addWidget(row);
+            }
+            updatesRows->addWidget(panel);
+        };
+        group("Apps", apps, "appUpdates");
+        group("System packages", system, "systemUpdates");
+        updateAll->setEnabled(flatpaks > 0);
+        updateAll->setToolTip(flatpaks > 0 ? QString() : "Only system updates are pending. They arrive in the next version.");
     }
 
     void openInstalledItem(QListWidgetItem *item) {
@@ -817,15 +880,51 @@ private:
         for (const auto &entry : backend.apps)
             for (const auto &package : entry.packages)
                 if (package.name == app.id && (package.source == Source::Flatpak) == (app.source == "Flatpak")) { openDetails(entry, app.source == "Flatpak" ? "Flatpak · " + package.repo : QString()); return; }
-        // Installed outside the catalogue: AppImages, local files, removed remotes.
+        // Installed outside the catalogue: the page starts with what the system knows, then fills in from the web.
         CatalogApp local; local.key = "installed:" + app.id; local.name = app.name;
-        local.summary = app.summary.isEmpty() ? "Description unavailable for this app." : app.summary; local.homepage = app.homepage;
-        openDetails(local, app.source);
+        local.icon = app.icon;
+        local.summary = app.summary.isEmpty() ? "Looking for a description…" : app.summary;
+        openDetails(local, app.source == "Other" ? QString() : app.source);
+        lookUpAbout(app, local);
+    }
+    // Package database first (offline), then the AUR, then a web summary for apps no package manager knows.
+    void lookUpAbout(const App &app, CatalogApp local) {
+        auto show = [this, key = local.key, platform = app.source == "Other" ? QString() : app.source](CatalogApp page) { if (appDetails->currentId == key) appDetails->showApp(page, platform); };
+        auto fallback = [this, app, local, show](CatalogApp page) mutable {
+            if (page.summary == "Looking for a description…") page.summary = "No description found for this app.";
+            show(page);
+        };
+        auto web = [this, app, local, fallback, show]() mutable {
+            QUrl url("https://api.duckduckgo.com/"); QUrlQuery query;
+            query.addQueryItem("q", app.name); query.addQueryItem("format", "json"); query.addQueryItem("no_html", "1"); query.addQueryItem("skip_disambig", "1");
+            url.setQuery(query);
+            backend.cachedGet(url, [app, local, fallback, show](QByteArray data) mutable {
+                const auto answer = QJsonDocument::fromJson(data).object();
+                const QString heading = answer.value("Heading").toString(), text = answer.value("AbstractText").toString();
+                // Only accept an answer that is about this name.
+                if (!text.isEmpty() && (heading.contains(app.name, Qt::CaseInsensitive) || app.name.contains(heading, Qt::CaseInsensitive))) {
+                    local.summary = text.size() > 260 ? text.left(260).section(' ', 0, -2) + "…" : text;
+                    if (local.homepage.isEmpty()) local.homepage = answer.value("AbstractURL").toString();
+                    show(local);
+                } else fallback(local);
+            });
+        };
+        if (app.source == "Arch" || app.source == "AUR / local") {
+            backend.readCommand("pacman", {"-Qi", app.id}, [local, web, show](int code, QString output, QString) mutable {
+                QString description, url;
+                for (const QString &line : output.split('\n')) {
+                    if (line.startsWith("Description")) description = line.section(':', 1).trimmed();
+                    else if (line.startsWith("URL")) url = line.section(':', 1).trimmed();
+                }
+                if (code == 0 && !description.isEmpty() && description != "None") { local.summary = description; local.homepage = url; show(local); }
+                else web();
+            });
+        } else if (app.summary.isEmpty()) web();
     }
 
     void renderInstalled() {
         if (!installedList || !installedSearch || !installedFilter) return;
-        displayedInstalled = backend.installed; displayedInstalled.append(filePreviews);
+        displayedInstalled = backend.installed;
         installedList->clear();
         const QString query = installedSearch->text().trimmed(), source = installedFilter->currentText();
         QList<int> matches;
@@ -843,11 +942,13 @@ private:
             if (!app.remote.isEmpty()) metadata << app.remote;
             if (!app.scope.isEmpty()) metadata << app.scope;
             if (!app.version.isEmpty()) metadata << app.version;
-            installedList->addApp(app.name, metadata.join(" · "), icon, index, {}, &previewOperations, app.id, true);
+            // One quiet line: what the app is, or its version when its publisher says nothing.
+            const QString line = !app.summary.isEmpty() ? app.summary : app.version.isEmpty() ? QString() : "Version " + app.version;
+            const bool managed = app.source != "Other";  // Only apps with a package manager or one of our files can be removed here
+            installedList->addApp(app.name, line, icon, index, metadata.join(" · "), managed ? &previewOperations : nullptr, app.id, true, app.source, app.source != "AppImage");
         }
         installedList->fitRows(); installedEmpty->setVisible(matches.isEmpty());
     }
-
 
 };
 
@@ -913,9 +1014,7 @@ int main(int argc, char **argv) {
     parser.setApplicationDescription("Native Qt 6 / KDE software store for CachyOS");
     parser.addHelpOption();
     parser.addOption({"screenshot", "Save an offscreen UI preview and exit (does not install software).", "path"});
-    parser.addOption({"authorization-preview", "Preview the sample-password update dialog."});
-    parser.addOption({"file-preview", "Preview file installation without package changes.", "path"});
-    parser.addOption({"drop-overlay", "Show the Installed drag overlay for a local file.", "path"});
+    parser.addOption({"import-appimage", "Copy an AppImage into the app menu and exit (used by the install window).", "path"});
     parser.addOption({"installed-open", "Open the first Installed app in the main detail view."});
     parser.addOption({"explore-end", "Preview the Load more button at the directory end."});
     parser.addOption({"activity-sidebar", "Preview simulated progress in the sidebar."});
@@ -949,6 +1048,18 @@ int main(int argc, char **argv) {
     parser.addOption({"live-catalog", "Use the live software sources in a screenshot preview instead of the test catalogue."});
     parser.addOption({"catalog-stats", "Load every software source, print catalogue counts and memory use, then exit."});
     parser.process(application);
+    if (parser.isSet("import-appimage")) {
+        int failures = 0;
+        const QString dataRoot = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        for (const QString &file : parser.values("import-appimage")) {
+            std::printf("==> Copying %s\n", qPrintable(QFileInfo(file).fileName())); std::fflush(stdout);
+            QString error;
+            if (importAppImage(file, dataRoot, &error).isEmpty()) { std::printf("error: %s\n", qPrintable(error)); ++failures; }
+            else std::printf("==> Adding to the app menu\n");
+            std::fflush(stdout);
+        }
+        return failures ? 1 : 0;
+    }
     if (parser.isSet("catalog-stats")) return catalogStats(application);
     QPalette p = application.palette();
     for (const auto group : {QPalette::Active, QPalette::Inactive})
@@ -967,53 +1078,33 @@ int main(int argc, char **argv) {
         bool passed = details->currentId == fixtureApp(store.backend, "Firefox").key && details->isVisible()
             && store.findChild<QButtonGroup *>("pageNavigation")->checkedId() == 1 && details->back->text() == "Installed";
         details->back->click(); store.selectPage(1);
-        QTemporaryDir droppedFiles;
-        QStringList paths;
-        for (const QString &name : {QString("Zzz-preview.AppImage"), QString("Zzz-flatpak.flatpakref")}) {
-            const QString path = droppedFiles.path() + '/' + name;
-            QFile file(path); if (!file.open(QIODevice::WriteOnly)) return 1;
-            if (file.write("Preview fixture only") < 0) return 1;
-            file.close(); paths.append(path);
+        {   // The two cards take only their own file type, and nothing is installed by a check
+            QTemporaryDir droppedFiles;
+            auto make = [&](const QString &name) { const QString path = droppedFiles.path() + '/' + name; QFile file(path); file.open(QIODevice::WriteOnly); file.write("fixture"); return QUrl::fromLocalFile(path); };
+            const QUrl appImage = make("Zzz-preview.AppImage"), flatpakRef = make("Zzz-flatpak.flatpakref");
+            auto *appImageCard = static_cast<DropCard *>(store.findChild<QAbstractButton *>("addAppImage")), *flatpakCard = static_cast<DropCard *>(store.findChild<QAbstractButton *>("addFlatpak"));
+            QT_WARNING_PUSH
+            QT_WARNING_DISABLE_DEPRECATED
+            auto offer = [](DropCard *card, const QList<QUrl> &urls) {
+                QMimeData mime; mime.setUrls(urls);
+                QDragEnterEvent enter(QPoint(20, 20), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(card, &enter);
+                const bool taken = enter.isAccepted() && card->dragging;
+                QDragLeaveEvent leave; QApplication::sendEvent(card, &leave);
+                return taken && !card->dragging;
+            };
+            QT_WARNING_POP
+            passed &= appImageCard && flatpakCard && offer(appImageCard, {appImage}) && offer(flatpakCard, {flatpakRef});
+            passed &= !offer(appImageCard, {flatpakRef}) && !offer(flatpakCard, {appImage}) && !offer(appImageCard, {QUrl("https://example.invalid/app.AppImage")});
+            passed &= installed->count() == 3 && !store.findChild<QWidget *>("fileDropOverlay");
         }
-        QMimeData mime; mime.setUrls({QUrl::fromLocalFile(paths[0]), QUrl::fromLocalFile(paths[1])});
-        auto *dropPage = store.findChild<QScrollArea *>("installedDropPage");
-        // Retain the Qt 6.6 event constructor in this compatibility check.
-        QT_WARNING_PUSH
-        QT_WARNING_DISABLE_DEPRECATED
-        QDragEnterEvent enter(QPoint(40, 40), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(dropPage->viewport(), &enter); passed &= enter.isAccepted();
-        auto *overlay = static_cast<FileDropOverlay *>(store.findChild<QWidget *>("fileDropOverlay"));
-        passed &= overlay && overlay->isVisible() && overlay->title == "Drop to install AppImage / Flatpak"
-            && overlay->geometry() == store.centralWidget()->rect();
-        QDragLeaveEvent leave; QApplication::sendEvent(dropPage->viewport(), &leave);
-        passed &= !overlay->isVisible();
-        QApplication::sendEvent(dropPage->viewport(), &enter);
-        QDropEvent drop(QPointF(40, 40), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(dropPage->viewport(), &drop);
-        passed &= drop.isAccepted() && installed->count() == 5 && !overlay->isVisible();
-        store.previewFiles(mime.urls()); passed &= installed->count() == 5;
-        QMimeData remote; remote.setUrls({QUrl("https://example.invalid/app.flatpak")});
-        QDragEnterEvent rejected(QPoint(40, 40), Qt::CopyAction, &remote, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(dropPage->viewport(), &rejected); passed &= !rejected.isAccepted() && !overlay->isVisible();
-        QT_WARNING_POP
-        installed->itemClicked(installed->item(installed->count() - 1));
-        passed &= details->isVisible() && details->sourceButton->text() == "AppImage";
-        details->back->click();
-        store.backend.installedChanged(); passed &= installed->count() == 5;
+        store.backend.installedChanged(); passed &= installed->count() == 3;
         passed &= page->loadMore->isHidden();  // The fixture fits in one page
-        store.findChild<QPushButton *>("updateAll")->click();
-        auto *auth = store.findChild<QDialog *>("updateAuthorization");
-        auto *password = auth->findChild<QLineEdit *>("previewPassword");
-        auto *accept = auth->findChild<QPushButton *>("acceptPreviewUpdates");
-        passed &= auth->isVisible() && password->echoMode() == QLineEdit::Password && !accept->isEnabled();
-        password->setText("sample-cancel"); auth->reject();
-        passed &= password->text().isEmpty() && store.findChild<QPushButton *>("updateAll")->isEnabled();
-        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        store.findChild<QPushButton *>("updateAll")->click();
-        auth = store.findChild<QDialog *>("updateAuthorization"); password = auth->findChild<QLineEdit *>("previewPassword");
-        accept = auth->findChild<QPushButton *>("acceptPreviewUpdates");
-        password->setText("sample"); passed &= accept->isEnabled(); accept->click();
-        passed &= password->text().isEmpty() && !store.findChild<QPushButton *>("updateAll")->isEnabled();
+        store.previewUpdates("available");
+        passed &= !store.findChild<QWidget *>("updateResults")->isHidden() && store.findChild<QWidget *>("updatesEmpty")->isHidden()
+            && store.findChildren<QPushButton *>("updateOne").size() == 2 && store.findChild<QPushButton *>("updateAll")->isVisible() && store.findChild<QFrame *>("systemUpdates");
+        store.previewUpdates("idle");
+        passed &= store.findChild<QWidget *>("updateResults")->isHidden() && store.findChild<QLabel *>("updatesTitle")->text() == "You're all up to date";
         CatalogApp longApp; longApp.key = "test-long-description"; longApp.name = "Long description"; longApp.origin = MetadataOrigin::AppStream;
         for (int line = 1; line <= 12; ++line) longApp.description += QString("<p>Paragraph %1 of the publisher description.</p>").arg(line);
         page->openPreview(longApp);
@@ -1069,9 +1160,9 @@ int main(int argc, char **argv) {
             }
             auto *list = static_cast<AppList *>(store.findChild<QListWidget *>("installedApps"));
             auto *remove = list->findChild<QPushButton *>("quickRemove");
-            remove->click(); result &= !remove->isEnabled() && remove->text() == "Removing…";
+            remove->click(); result &= !remove->isEnabled() && remove->property("state").toString() == "Removing…";
             QTimer::singleShot(2300, &store, [&application, &store, result, remove, list] {
-                bool removed = result && remove->text() == "Removed" && !remove->isEnabled();
+                bool removed = result && remove->property("state").toString() == "Removed" && !remove->isEnabled();
                 auto *reinstall = list->findChild<QPushButton *>("quickReinstall"); reinstall->click();
                 removed &= reinstall->text() == "Reinstalling…" && !reinstall->isEnabled();
                 QTimer::singleShot(2300, &store, [&application, removed, reinstall, remove] {
@@ -1384,7 +1475,7 @@ int main(int argc, char **argv) {
         const auto inventory = store.backend.installed;
         for (int copy = 0; copy < 4; ++copy) store.backend.installed.append(inventory);
         store.backend.installedChanged(); settle();
-        auto *installedPage = store.findChild<QScrollArea *>("installedDropPage");
+        auto *installedPage = store.findChild<QScrollArea *>("installedPage");
         installedPage->verticalScrollBar()->setValue(qMin(180, installedPage->verticalScrollBar()->maximum()));
         const int installedScroll = installedPage->verticalScrollBar()->value();
         const QString installedId = store.backend.installed[installed->item(12)->data(Qt::UserRole).toInt()].id.toLower();
@@ -1396,10 +1487,9 @@ int main(int argc, char **argv) {
         details->back->click(); passed &= installedPage->isVisible() && installedPage->verticalScrollBar()->value() == installedScroll;
         store.backend.installed = inventory; store.backend.installedChanged();
         store.previewUpdates("checking");
-        passed &= !store.findChild<QPushButton *>("checkUpdates")->isEnabled() && store.findChild<QLabel *>("updateStatus")->text() == "Checking…";
+        passed &= !store.findChild<QPushButton *>("checkUpdates")->isEnabled() && store.findChild<QLineEdit *>("updateStatus")->text() == "Checking…";
         store.previewUpdates("failed");
-        passed &= store.findChild<QPushButton *>("checkUpdates")->isEnabled() && store.findChild<QLabel *>("updateStatus")->text() == "Check failed";
-        store.previewUpdates("idle"); passed &= store.findChild<QPlainTextEdit *>("updateOutput")->isReadOnly();
+        passed &= store.findChild<QPushButton *>("checkUpdates")->isEnabled() && store.findChild<QLabel *>("updatesTitle")->text() == "Couldn't check for updates";
         fprintf(stdout, "Explore, Installed, and Updates layout check: %s\n", passed ? "PASS" : "FAIL");
         return passed ? 0 : 1;
     }
@@ -1434,26 +1524,13 @@ int main(int argc, char **argv) {
     if (parser.isSet("installed-preview")) store.previewInstalled();
     if (parser.value("page") == "updates") store.selectPage(2);
     if (parser.isSet("updates-preview")) store.previewUpdates(parser.value("updates-preview"));
-    if (parser.isSet("file-preview")) { store.selectPage(1); store.previewFiles({QUrl::fromLocalFile(parser.value("file-preview"))}); }
-    if (parser.isSet("drop-overlay")) {
-        store.previewInstalled(); QApplication::processEvents();
-        QMimeData mime; mime.setUrls({QUrl::fromLocalFile(parser.value("drop-overlay"))});
-        QT_WARNING_PUSH
-        QT_WARNING_DISABLE_DEPRECATED
-        QDragEnterEvent enter(QPoint(40, 40), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-        QT_WARNING_POP
-        QApplication::sendEvent(store.findChild<QScrollArea *>("installedDropPage")->viewport(), &enter);
-    }
     if (parser.isSet("installed-open")) {
         auto *list = store.findChild<QListWidget *>("installedApps");
         if (list->count()) {
             auto *item = list->item(0);
-            if (parser.isSet("file-preview")) for (int i = 0; i < list->count(); ++i)
-                if (list->item(i)->text().section('\n', 0, 0) == QFileInfo(parser.value("file-preview")).completeBaseName()) item = list->item(i);
             list->itemClicked(item);
         }
     }
-    if (parser.isSet("authorization-preview")) { store.selectPage(2); store.showUpdateAuthorization(); }
     if (parser.isSet("install-preview")) {
         if (parser.isSet("explore-bottom")) store.findChild<QListWidget *>("exploreResults")->findChild<QPushButton *>("quickInstall")->click();
         else store.findChild<QPushButton *>("previewInstall")->click();
@@ -1489,7 +1566,6 @@ int main(int argc, char **argv) {
         auto *timeout = new QTimer(&store);
         timeout->setSingleShot(true);
         auto savePreview = [&store, &parser] {
-            if (parser.isSet("authorization-preview")) return store.findChild<QDialog *>("updateAuthorization")->grab().save(parser.value("screenshot"));
             return ((parser.isSet("activity-preview") || parser.isSet("activity-empty")) ? store.findChild<QDialog *>("activityPopup")->grab() : store.grab()).save(parser.value("screenshot"));
         };
         auto capture = [&application, timeout, savePreview] {
