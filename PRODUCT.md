@@ -18,30 +18,26 @@ A CachyOS desktop user who wants graphical software discovery and maintenance on
 
 Discover software, inspect app details, and manage installed software within one native KDE window.
 
-## Current Prototype
+## Current State
 
-Explore shows the real catalogue: Flathub, every pacman repository including CachyOS, and the AUR. The same app from several sources is one entry with a source menu. Search, categories, featured apps, and suggestion sections use this catalogue and daily popularity rankings from Flathub and pkgstats. App details show the publisher description, screenshots, latest release, add-ons, links, and permissions of installed Flatpaks. Install, Reinstall and Remove run the real package manager; AUR builds require a review and run in a clean chroot. Update remains a simulation.
+Explore shows the real catalogue: Flathub, every pacman repository including CachyOS, and the AUR. The same app from several sources is one entry with a source menu. Search, categories, featured apps and suggestion sections use this catalogue and daily popularity rankings from Flathub and pkgstats. App details show the publisher description, screenshots, latest release, add-ons, links, ratings, and permissions of installed Flatpaks. Install, Reinstall and Remove run the real package manager; AUR builds require a review and run in a clean chroot.
 
-Installed reads the backend inventory and merges session-only file preview rows. Every row opens the main Explore detail page. Known apps use catalogue metadata; unknown apps use available metadata and an icon fallback with explicit unavailable states. Remove, Reinstall, Install, and Open are simulations; they change no packages and launch no apps.
+Installed lists the apps in the application menu like the Start menu, with the source of each (Flatpak, Arch, AUR / local, AppImage, Other). Add AppImage and Add Flatpak accept files by click or drop and use the normal install window.
 
-Add AppImage, Add Flatpak, and drops anywhere on Installed accept local readable files with .AppImage, .flatpak, or .flatpakref extensions, case-insensitively. This checks file location, readability, and extension only. Accepted files queue previews without another confirmation. Canonical paths suppress duplicates. Preview rows survive inventory refresh for the current session. No files are copied, extracted, executed, or installed.
+Updates checks Arch, AUR, Flatpak and AppImage updates at start and on demand. Update all updates everything in the list; System Update runs a full pacman upgrade and the AUR updates. A failed system upgrade stops the run. A new kernel triggers a desktop notification that offers to restart.
 
-Check for updates runs the read-only `arch-update --list` command. Update all and Review updates open Confirm updates with a masked Sample password field. Accept updates requires nonempty sample text, clears it, and starts simulated shared progress. Cancel also clears the field. No system authorization or real update command occurs. The harmless embedded terminal demo remains available.
+News shows Arch Linux, CachyOS, Linux kernel, KDE, LWN.net, 9to5Linux and Phoronix items in two columns; unread Arch Linux and CachyOS items badge the sidebar.
 
-Activity presents shared preview progress and history in a modeless popup. Expanded navigation uses a plain icon and progress line with a native sidebar divider; compact navigation uses an icon progress arc without the divider.
+Activity shows package operation history; each entry reopens its progress window. The header of Explore, Installed, Updates and News stays at the top while the page scrolls.
 
-## Future Capabilities and Constraints
+## Constraints
 
-- Connect configured Flatpak sources and cached AppStream metadata to live discovery.
 - Keep each software source explicit.
-- Download AUR build files without executing them and require review before building.
-- Never describe automated AUR checks as proof of safety.
+- Download AUR build files without executing them and require review before a first build.
+- Never describe automated AUR checks as proof of safety. AUR updates skip the review step and say so.
 - Import AppImages into user storage and add desktop launchers without executing the files.
-- Connect Cachy-Update and its interactive authentication within the store.
 - Preserve package-manager prompts and refuse concurrent package operations.
-- Keep the graphical application running as the normal user.
-
-Backend import and AUR helpers exist but are not connected to this prototype interface.
+- Keep the graphical application running as the normal user; privileges come from polkit.
 
 ## Brand Commitments
 
@@ -49,12 +45,10 @@ Use existing publisher images and app icons for app artwork. AI-generated images
 
 Use GNOME Software-style app discovery with persistent KDE navigation. Inherit the user's KDE theme, colors, fonts, and icons.
 
-## Evidence on Hand
+## Replaces
 
-The development environment has Cachy-Update 4.4.2 at `/usr/bin/arch-update` and `/usr/bin/cachy-update`, plus KonsolePart, Qt 6, Flatpak, and paru. These installed tools do not imply that prototype actions execute them.
+WoofStore is meant to replace Cachy-Update (arch-update) and Shelly. Missing before both can be removed: background update checks with a tray icon and notification, listing every installed package (not only apps with a launcher), downgrade, hold and ignore marks, `.pacnew` handling, orphan and cache cleanup, news before the update.
 
 ## Open Decisions
 
-Public distribution, cross-distribution support, and a fully graphical replacement for terminal prompts remain outside the current prototype.
-
-App detail pages show the latest available cached publisher changelog instead of scores. Visible pages omit Preview badges and footers. Simulated actions remain unconnected to package changes.
+Cross-distribution support and a graphical replacement for terminal prompts remain outside the current scope.

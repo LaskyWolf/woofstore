@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WoofStore
+GenericName=Software Store
+Comment=Install apps, update the system and read Arch and CachyOS news
+Exec=woof-store %u
+Icon=io.github.laskywolf.WoofStore
+Terminal=false
+StartupNotify=true
+Categories=System;PackageManager;
+MimeType=x-scheme-handler/appstream;
+Keywords=software;store;flatpak;pacman;aur;appimage;update;

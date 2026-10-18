@@ -412,7 +412,7 @@ public:
         buildSearch(layout);
         notice = text(""); notice->setObjectName("exploreNotice"); notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
         notice->hide(); layout->addWidget(notice);
-        buildFilters(layout);
+        buildFilters();
         buildCarousel(layout);
         offlineNote = text("Offline: showing saved suggestions."); offlineNote->setObjectName("offlineNote"); offlineNote->hide();
         layout->addWidget(offlineNote);
@@ -731,9 +731,8 @@ private:
         const bool stuck = home.y() < 0;
         if (stuck != searchStuck) {
             searchStuck = stuck;
-            // A stylesheet replaces the automatic background fill, so the colour is part of it.
             searchBarLayout->setContentsMargins(stuck ? home.x() : 0, stuck ? 8 : 0, stuck ? home.x() : 0, stuck ? 8 : 0);
-            searchBar->setStyleSheet(stuck ? "#stickyBar { background: palette(window); border-bottom: 1px solid palette(mid); }" : QString());
+            static_cast<StickyFill *>(searchBar)->stuck = stuck; searchBar->update();
         }
         // Stuck, the bar spans the whole viewport so nothing shows through at the sides.
         const int extra = stuck ? 16 : 0;
@@ -742,7 +741,7 @@ private:
         searchBar->raise();
     }
     void buildSearch(QVBoxLayout *layout) {
-        searchBar = new QWidget(viewport()); searchBar->setObjectName("stickyBar"); searchBar->setAutoFillBackground(true);
+        searchBar = new StickyFill(viewport()); searchBar->setObjectName("stickyBar");
         searchBarLayout = new QVBoxLayout(searchBar); searchBarLayout->setContentsMargins(0, 0, 0, 0); searchBarLayout->setSpacing(12);
         searchBarLayout->addWidget(text("Explore", 23, true));  // The title stays with the search when the page scrolls
         auto *searchRow = new QHBoxLayout; searchRow->setSpacing(8); searchBarLayout->addLayout(searchRow);
@@ -771,9 +770,9 @@ private:
         connect(search, &QLineEdit::textChanged, &searchDelay, qOverload<>(&QTimer::start));
         connect(search, &QLineEdit::returnPressed, this, [this] { applyFilters(); });
         filters = new QToolButton; filters->setIcon(QIcon::fromTheme("view-filter")); filters->setText("Filters"); filters->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); filters->setCheckable(true);
-        filters->setAutoRaise(true); filters->setMinimumHeight(38); filters->setAccessibleName("Show or hide filters and categories"); searchRow->addWidget(filters);
+        filters->setMinimumHeight(38); filters->setAccessibleName("Show or hide filters and categories"); searchRow->addWidget(filters);
         auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshExplore");
-        refresh->setFlat(true); refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the catalogue"); refresh->setAccessibleName("Refresh the catalogue"); refresh->setCursor(Qt::PointingHandCursor);
+        refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the catalogue"); refresh->setAccessibleName("Refresh the catalogue"); refresh->setCursor(Qt::PointingHandCursor);
         connect(refresh, &QPushButton::clicked, this, [this] { if (onRefresh) onRefresh(); });
         searchRow->addWidget(refresh);
         searchSlot = new QWidget; searchSlot->setFixedHeight(searchBar->sizeHint().height()); layout->addWidget(searchSlot);
@@ -782,7 +781,7 @@ private:
         }));
         connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { placeSearchBar(); });
     }
-    void buildFilters(QVBoxLayout *layout) {
+    void buildFilters() {
         filterPanel = new QWidget; auto *filterLayout = new QVBoxLayout(filterPanel); filterLayout->setContentsMargins(0, 0, 0, 0); filterLayout->setSpacing(12);
         auto *options = new QHBoxLayout;
         source = new QComboBox; source->setObjectName("softwareSource"); source->addItems({"All sources", "Repositories", "Flatpak", "AUR"}); source->setAccessibleName("Software source");

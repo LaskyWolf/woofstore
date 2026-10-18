@@ -7,6 +7,10 @@
 #include <KParts/ReadOnlyPart>
 #include <kde_terminal_interface.h>
 #include <unistd.h>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include "installflow.h"
 
 static QLabel *label(const QString &text, int size = 0, bool bold = false) {
@@ -57,7 +61,7 @@ public:
     }
     explicit Store(bool loadCatalogue = true) : inventoryEnabled(loadCatalogue) {
         setWindowTitle("WoofStore");
-        setWindowIcon(QIcon::fromTheme("system-software-install"));
+        setWindowIcon(QIcon::fromTheme("io.github.laskywolf.WoofStore", QIcon::fromTheme("system-software-install")));
         resize(1180, 850);
         setMinimumSize(720, 580);
         auto *root = new QWidget;
@@ -92,7 +96,7 @@ public:
         auto *navHost = new QWidget; navHost->setObjectName("navigation");
         auto *navLayout = new QVBoxLayout(navHost); navLayout->setContentsMargins(0, 0, 0, 0); navLayout->setSpacing(8);
         int id = 0;
-        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "compass"}, {"Installed", "list"}, {"Updates", "refresh"}}) {
+        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "compass"}, {"Installed", "list"}, {"Updates", "refresh"}, {"News", "newspaper"}}) {
             auto *item = new NavButton(entry.first, entry.second);
             item->setObjectName("nav" + entry.first);
             item->setAccessibleName(entry.first); item->setToolTip(entry.first);
@@ -127,6 +131,7 @@ public:
         buildExplore();
         buildInstalled();
         buildUpdates();
+        buildNews();
         compactSidebar->setChecked(settings.value("compactSidebar", false).toBool());
         activityDialog = new QDialog(this); activityDialog->setObjectName("activityPopup");
         activityDialog->setWindowTitle("Activity"); activityDialog->resize(800, 600);
@@ -134,14 +139,22 @@ public:
         auto *activityLayout = new QVBoxLayout(activity);
         activityLayout->setContentsMargins(20, 16, 20, 24); activityLayout->setSpacing(16);
         activityTitle = label("Activity", 23, true);
-        activityStatus = label("No package operation running.");
+        activityStatus = label(""); activityStatus->setVisible(false);
         activityHistory = new QListWidget; activityHistory->setObjectName("activityHistory"); activityHistory->setFrameShape(QFrame::NoFrame);
         activityHistory->setAccessibleName("Activity history"); activityHistory->setMinimumHeight(120); activityHistory->setSpacing(8);
         activityHistory->setStyleSheet("QListWidget { background: transparent; border: none; } QListWidget::item { background: palette(alternate-base); border: none; border-radius: 8px; }");
         activityLayout->addWidget(activityTitle);
         activityLayout->addWidget(activityStatus);
-        auto *emptyActivity = label("No activity yet\nInstall an app to see activity"); emptyActivity->setObjectName("emptyActivity");
-        activityLayout->addWidget(emptyActivity);
+        auto *emptyBox = new QWidget; emptyBox->setObjectName("emptyActivityBox");
+        auto *emptyLayout = new QVBoxLayout(emptyBox); emptyLayout->setSpacing(10); emptyLayout->setAlignment(Qt::AlignCenter);
+        auto *trophy = new QLabel; trophy->setAlignment(Qt::AlignCenter);
+        QPixmap trophyPixmap(144, 144); trophyPixmap.setDevicePixelRatio(2); trophyPixmap.fill(Qt::transparent);
+        { QPainter painter(&trophyPixmap); drawLucide(painter, "trophy", QRectF(0, 0, 72, 72), QColor("#f5c211"), 1.4); }
+        trophy->setPixmap(trophyPixmap);
+        auto *emptyActivity = label("No activity yet", 18, true); emptyActivity->setObjectName("emptyActivity"); emptyActivity->setAlignment(Qt::AlignCenter);
+        auto *emptyHint = label("Nothing installed, nothing broken. Suspiciously peaceful."); emptyHint->setObjectName("emptyActivityHint"); emptyHint->setAlignment(Qt::AlignCenter); emptyHint->setMinimumWidth(380); emptyHint->setForegroundRole(QPalette::PlaceholderText);
+        emptyLayout->addStretch(); emptyLayout->addWidget(trophy); emptyLayout->addWidget(emptyActivity); emptyLayout->addWidget(emptyHint); emptyLayout->addStretch();
+        activityLayout->addWidget(emptyBox, 1);
         activityLayout->addWidget(activityHistory, 1);
         terminalHost = new QWidget;
         terminalLayout = new QVBoxLayout(terminalHost);
@@ -181,6 +194,7 @@ public:
         appDetails->onBack = [this] { moveHistory(-1); };
         appDetails->onOpenAddon = [this](const CatalogApp &app) { openDetails(app); };
         qApp->installEventFilter(this);
+        if (inventoryEnabled) { QTimer::singleShot(0, this, &Store::loadNews); QTimer::singleShot(3000, this, &Store::checkReboot); }
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
         connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); settleOperation(); previewOperations.refreshButtons(); appDetails->refreshRemove();
             if (inventoryEnabled && !updatesChecked) checkForUpdates();  // Once at start, when the installed list is known
@@ -196,6 +210,7 @@ public:
             appIndex.clear();
             for (int i = 0; i < backend.apps.size(); ++i) appIndex.insert(backend.apps[i].key, i);
             if (inventoryEnabled) backend.loadInstalled();  // So buttons of installed apps read "Open"
+            if (!pendingRequest.isEmpty()) openRequest(pendingRequest);
         });
         connect(&backend, &Backend::rankingsReady, this, [this] { explore->setCatalog(); });
         // Checks and previews use a small fixed catalogue instead of the live sources.
@@ -205,6 +220,7 @@ public:
 
     void selectPage(int page) {
         if (!navigation->button(page)) return;
+        if (page == 3) openedNews();
         const bool enteringInstalled = page == 1 && pages->currentIndex() != 1;
         if (pages->currentWidget() != pages->widget(page)) pushHistory({pages->widget(page), {}, {}, page});
         if (enteringInstalled && inventoryEnabled) backend.loadInstalled();
@@ -228,9 +244,23 @@ public:
         pendingUpdates.clear(); updateProblems.clear(); updateChecking = state == "checking"; updatesChecked = state != "checking";
         lastUpdateCheck = QTime(9, 41);
         if (state == "failed") updateProblems = {"Flatpak: the remote is not reachable."};
-        if (state == "available") pendingUpdates = {{"org.kde.krita", "Krita", "5.2.9", "5.3.0", "Flatpak"}, {"org.gimp.GIMP", "GIMP", "3.0.4", "3.0.6", "Flatpak"},
-            {"systemd", "systemd", "262-1", "262.1-1", "Arch"}, {"linux-cachyos", "linux-cachyos", "7.2.9-2", "7.2.11-1", "Arch"}};
+        if (state == "available" || state == "apps") pendingUpdates = {{"org.kde.krita", "Krita", "5.2.9", "5.3.0", "Flatpak", {}}, {"org.gimp.GIMP", "GIMP", "3.0.4", "3.0.6", "Flatpak", {}}, {"abc123", "Lotion", {}, "v1.7.0", "AppImage", "https://example.invalid/Lotion.AppImage"},
+            {"systemd", "systemd", "262-1", "262.1-1", "Arch", {}}, {"linux-cachyos", "linux-cachyos", "7.2.9-2", "7.2.11-1", "Arch", {}}, {"paru", "paru", "2.0.4-1", "2.1.0-1", "AUR", {}}};
+        if (state == "apps") pendingUpdates = pendingUpdates.mid(0, 3);  // Only apps: the system button stays grey
         refreshUpdates();
+    }
+    // Sample news for screenshots and checks: no network.
+    void previewNews() {
+        const QDateTime now(QDate(2026, 10, 18), QTime(12, 0));
+        news = {{"Arch Linux", "Manual intervention required for the nvidia 580 driver update", "Packages from the 580 series need the older driver removed first. Remove it before you update, then install nvidia-open again.", "https://archlinux.org/news/", now, true, {}},
+                {"CachyOS", "CachyOS October 2026 Release", "New ISO, kernel 7.2 as default and a reworked update tool.", "https://cachyos.org/blog/", now.addDays(-3), true, {}},
+                {"Linux kernel", "7.2.11: stable", "", "https://kernel.org", now.addDays(-1), false, {}},
+                {"KDE", "Plasma 6.9 beta is out for testing", "The beta brings a new panel editor, faster window previews and many fixes in the Wayland session. Testers can report problems until the final release.", "https://kde.org/announcements/", now.addDays(-4), false, QString(WOOFSTORE_FIXTURES) + "/images/org.kde.krita-screenshot.png"},
+                {"LWN.net", "A look at the new scheduler extension class", "Sched_ext lets programs written in BPF decide which task runs next.", "https://lwn.net", now.addDays(-5), false, {}},
+                {"9to5Linux", "Mesa 26.2 released with Vulkan improvements", "The release adds drivers for new GPUs and speeds up shader compilation.", "https://9to5linux.com", now.addDays(-6), false, QString(WOOFSTORE_FIXTURES) + "/images/org.gimp.GIMP-screenshot.png"}};
+        newsLoading = false;
+        selectPage(3); newsPillSince = now.addDays(-2);  // Opening the page marks the real news as seen; the preview keeps its own pills
+        renderNews();
     }
     void previewListSelection() {
         auto *list = pages->currentWidget() == explore ? explore->results : installedList;
@@ -249,7 +279,7 @@ public:
             const QString state = activity.failed ? "Failed" : activity.progress == 100 ? "Complete" : activity.real ? QString("Running") : QString::number(activity.progress) + "%";
             records.append({activity.name, activity.action + " · " + state, activity.progress, false});
         }
-        activityDialog->findChild<QLabel *>("emptyActivity")->setVisible(records.isEmpty());
+        activityDialog->findChild<QLabel *>("emptyActivity")->setVisible(records.isEmpty()); activityDialog->findChild<QWidget *>("emptyActivityBox")->setVisible(records.isEmpty());
         if (activityHistory->count() != records.size()) {
             activityHistory->clear();
             for (int i = 0; i < records.size(); ++i) {
@@ -280,7 +310,7 @@ public:
         const bool canClear = completed || packageActivityHistory.size() > (busy() ? 1 : 0);
         clear->setEnabled(canClear); clear->setCursor(canClear ? Qt::PointingHandCursor : Qt::ArrowCursor);
         static_cast<QGraphicsOpacityEffect *>(clear->graphicsEffect())->setOpacity(canClear ? 1. : .4);
-        if (!busy()) activityStatus->setText(previewOperations.running() ? "No package changes" : "Activity history");
+        if (!busy()) { activityStatus->setText(previewOperations.running() ? "No package changes" : QString()); activityStatus->setVisible(!activityStatus->text().isEmpty()); }
         activityButton->setResult(lastResult);
         activityButton->attention = bool(part) || jobFailed;  // A terminal waiting for input, or a failure nobody has looked at activityButton->update();
         activityButton->busy = busy() || previewOperations.running(); activityButton->indeterminate = busy();
@@ -336,13 +366,13 @@ public:
         terminalLayout->addWidget(part->widget());
         activityTitle->setText(title);
         packageActivityHistory.append(title + " · Running · progress unavailable"); packageJobs.append(JobRecord{});
-        activityStatus->setText("Answer questions directly below. Passwords are handled by the package manager. Keep this window open until the process finishes.");
+        activityStatus->setText("Answer questions directly below. Passwords are handled by the package manager. Keep this window open until the process finishes."); activityStatus->setVisible(true);
         showActivity();
         refreshActivity();
         connect(part, &QObject::destroyed, this, [this] {
             part = nullptr;
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = activityTitle->text() + " · Ended · check command exit code";
-            activityStatus->setText("Activity ended. Check the exit code in its output before retrying.");
+            activityStatus->setText("Activity ended. Check the exit code in its output before retrying."); activityStatus->setVisible(true);
             refreshActivity();
             settling = true;
             backend.loadInstalled();
@@ -448,6 +478,7 @@ public:
             refreshActivity();
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
             if (inventoryEnabled && title.startsWith("Update")) QTimer::singleShot(0, this, &Store::checkForUpdates);
+            if (ok && inventoryEnabled && (title == "Update system" || title == "Update all")) { QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); }); }
         });
         // setsid: no controlling terminal, so sudo uses the askpass dialog; -w keeps the exit code.
         process->start("setsid", QStringList{"-w", executable} + arguments);
@@ -480,7 +511,7 @@ public:
         return true;
     }
     void beginPending(const QString &key, const QString &name, const QString &action, const Package &package) {
-        pendingOp = {key, name, action, package, true};
+        pendingOp = {key, name, action, package, true, {}};
         previewOperations.begin(key, name, action);
     }
     void settleOperation() {
@@ -579,7 +610,7 @@ public:
         dialog->show();
     }
 private:
-    QPushButton *updateAll = nullptr;
+    QPushButton *updateAll = nullptr, *systemUpdate = nullptr;
     QSettings settings;
     QWidget *sidebar = nullptr;
     QFrame *sidebarDivider = nullptr;
@@ -676,6 +707,10 @@ private:
 public:
     QList<UpdateEntry> pendingUpdates;  // Found by the last check
     QStringList updateProblems;
+    QList<NewsItem> news; QStringList newsProblems; bool newsLoading = false;
+    QDateTime newsPillSince;  // News newer than this carry the "New" pill while the page is open
+    QLineEdit *newsSearch = nullptr; QLabel *newsStatus = nullptr; QHBoxLayout *newsRow = nullptr; QScrollArea *newsScroll = nullptr; QPushButton *newsMore = nullptr; QWidget *newsLoadingBox = nullptr; int newsColumnCount = 0, newsExtra = 0;
+    bool rebootNotified = false; uint rebootNoticeId = 0;
     bool updateChecking = false, updatesChecked = false;
     QTime lastUpdateCheck;
 private:
@@ -733,7 +768,7 @@ private:
         installedFilter->setMinimumHeight(38);
         installedFilter->setAccessibleName("Installed software source");
         auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshInstalled");
-        refresh->setFlat(true); refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the list"); refresh->setAccessibleName("Refresh installed software"); refresh->setCursor(Qt::PointingHandCursor);
+        refresh->setFixedSize(38, 38); refresh->setToolTip("Refresh the list"); refresh->setAccessibleName("Refresh installed software"); refresh->setCursor(Qt::PointingHandCursor);
         searchRow->addWidget(installedSearch, 1);
         searchRow->addWidget(installedFilter);
         searchRow->addWidget(refresh);
@@ -778,8 +813,11 @@ private:
         updateStatus = new QLineEdit; updateStatus->setObjectName("updateStatus"); updateStatus->setReadOnly(true);  // Looks like the search bar of Installed
         updateStatus->setFocusPolicy(Qt::NoFocus); updateStatus->setMinimumHeight(38); updateStatus->setCursor(Qt::ArrowCursor);
         checkUpdates = new QPushButton(lucideIcon("refresh", 20), {}); checkUpdates->setObjectName("checkUpdates");
-        checkUpdates->setFlat(true); checkUpdates->setFixedSize(38, 38); checkUpdates->setToolTip("Check for updates"); checkUpdates->setAccessibleName("Check for updates"); checkUpdates->setCursor(Qt::PointingHandCursor);
-        statusRow->addWidget(updateStatus, 1); statusRow->addWidget(checkUpdates);
+        checkUpdates->setFixedSize(38, 38); checkUpdates->setToolTip("Check for updates"); checkUpdates->setAccessibleName("Check for updates"); checkUpdates->setCursor(Qt::PointingHandCursor);
+        auto *orphansButton = new QPushButton(lucideIcon("package", 20), {}); orphansButton->setObjectName("orphansButton");
+        orphansButton->setFixedSize(38, 38); orphansButton->setToolTip("Find orphan packages"); orphansButton->setAccessibleName("Find orphan packages"); orphansButton->setCursor(Qt::PointingHandCursor);
+        connect(orphansButton, &QPushButton::clicked, this, [this] { showOrphans(); });
+        statusRow->addWidget(updateStatus, 1); statusRow->addWidget(orphansButton); statusRow->addWidget(checkUpdates);
         sticky->column->addLayout(statusRow);
         sticky->fit();
         updatesEmpty = new QWidget; updatesEmpty->setObjectName("updatesEmpty"); updatesEmpty->setMinimumHeight(340);
@@ -792,12 +830,290 @@ private:
         updatesPanel = new QWidget; updatesPanel->setObjectName("updateResults");
         updatesRows = new QVBoxLayout(updatesPanel); updatesRows->setContentsMargins(0, 0, 0, 0); updatesRows->setSpacing(16);
         content->addWidget(updatesPanel); content->addStretch();
-        updateAll = new QPushButton(QIcon::fromTheme("system-software-update"), "Update all"); updateAll->setObjectName("updateAll");
-        updateAll->setMinimumHeight(44); updateAll->setDefault(true); updateAll->setCursor(Qt::PointingHandCursor);
-        new StickyFooter(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content, updateAll);
+        updateAll = new QPushButton(lucideIcon("refresh", 20), "Update all"); updateAll->setObjectName("updateAll");
+        updateAll->setMinimumHeight(44); updateAll->setCursor(Qt::PointingHandCursor);
+        updateAll->setToolTip("Update every app and package in the list");
+        // The system update takes the accent colour while there is something for it to do; a disabled button stays grey.
+        systemUpdate = new QPushButton(lucideIcon("package", 20, palette().color(QPalette::HighlightedText)), "System Update"); systemUpdate->setObjectName("systemUpdate");
+        systemUpdate->setMinimumHeight(44); systemUpdate->setCursor(Qt::PointingHandCursor);
+        systemUpdate->setStyleSheet("QPushButton#systemUpdate[pending=true] { background: palette(highlight); color: palette(highlighted-text); border: 1px solid palette(highlight); border-radius: 6px; }"
+                                    "QPushButton#systemUpdate[pending=true]:hover { border: 1px solid palette(highlighted-text); }"
+                                    "QPushButton#systemUpdate[pending=true]:focus { border: 2px solid palette(highlighted-text); }");
+        auto *actions = new QWidget; auto *actionsLayout = new QVBoxLayout(actions); actionsLayout->setContentsMargins(0, 0, 0, 0); actionsLayout->setSpacing(8);
+        actionsLayout->addWidget(updateAll); actionsLayout->addWidget(systemUpdate);
+        new StickyFooter(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content, actions);
         connect(checkUpdates, &QPushButton::clicked, this, &Store::checkForUpdates);
-        connect(updateAll, &QPushButton::clicked, this, [this] { startJob("Update apps", "flatpak", {"update", "-y", "--noninteractive"}); });
+        connect(updateAll, &QPushButton::clicked, this, [this] { runUpdates(true); });
+        connect(systemUpdate, &QPushButton::clicked, this, [this] { runUpdates(false); });
         refreshUpdates();
+    }
+
+    // What an update run does, shown before it starts. Each step is a section of one script, so a failed system upgrade stops the rest.
+    struct UpdateChoice { bool ok = false, aur = false, devel = false; };
+    UpdateChoice askUpdate(const QString &title, const QString &summary, int aurCount) {
+        QDialog dialog(this); dialog.setObjectName("updateConfirm"); dialog.setWindowTitle(title); dialog.setMinimumWidth(480);
+        auto *layout = new QVBoxLayout(&dialog); layout->setContentsMargins(20, 18, 20, 16); layout->setSpacing(10);
+        layout->addWidget(label(title, 15, true)); layout->addWidget(label(summary));
+        const bool hasParu = !QStandardPaths::findExecutable("paru").isEmpty();
+        auto note = [this](const QString &text) { auto *item = label(text); item->setForegroundRole(QPalette::PlaceholderText); item->setContentsMargins(26, 0, 0, 0); return item; };
+        QCheckBox *aur = nullptr, *devel = nullptr;
+        if (hasParu && aurCount > 0) {
+            aur = new QCheckBox(QString("Include the %1 AUR package%2").arg(aurCount).arg(aurCount == 1 ? "" : "s")); aur->setChecked(settings.value("updateAur", true).toBool());
+            layout->addSpacing(4); layout->addWidget(aur); layout->addWidget(note("AUR packages are built on this computer from recipes anyone can publish. Updates are built without the review step the store asks for on a first install."));
+        }
+        if (hasParu) {
+            devel = new QCheckBox("Also check development (git) packages"); devel->setObjectName("updateDevel"); devel->setChecked(settings.value("updateDevel", false).toBool());
+            layout->addSpacing(4); layout->addWidget(devel);
+            layout->addWidget(note("Packages whose name ends in -git, -svn or -hg are built from the newest source code instead of a release. Their version number rarely changes, so the list cannot show when they have news. "
+                                   "With this option paru asks each project whether it has new commits and rebuilds the ones that do. It takes longer, and a rebuild can compile for several minutes."));
+        }
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+        auto *go = buttons->addButton(title, QDialogButtonBox::AcceptRole); go->setDefault(true);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addSpacing(6); layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted) return {};
+        UpdateChoice choice; choice.ok = true;
+        choice.aur = aur ? aur->isChecked() : false; choice.devel = devel && devel->isChecked();
+        if (aur) settings.setValue("updateAur", choice.aur);
+        if (devel) settings.setValue("updateDevel", choice.devel);
+        return choice;
+    }
+
+    void runUpdates(bool all) {
+        int arch = 0, aur = 0, flatpaks = 0; QList<UpdateEntry> images;
+        for (const auto &entry : pendingUpdates) {
+            if (entry.source == "Arch") ++arch; else if (entry.source == "AUR") ++aur;
+            else if (entry.source == "Flatpak") ++flatpaks; else if (entry.source == "AppImage") images.append(entry);
+        }
+        auto count = [](int n, const QString &one, const QString &many) { return QString("%1 %2").arg(n).arg(n == 1 ? one : many); };
+        QStringList lines;
+        if (arch) lines << "• " + count(arch, "repository package", "repository packages") + ": a full system upgrade (pacman -Syu)";
+        if (aur) lines << "• " + count(aur, "AUR package", "AUR packages");
+        if (all && flatpaks) lines << "• " + count(flatpaks, "Flatpak app", "Flatpak apps");
+        if (all && !images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
+        if (!all && !arch) lines << "• Nothing is listed as outdated. This still syncs the package databases (pacman -Syu) and lists orphan packages.";
+        const QString title = all ? "Update all" : "Update system";
+        const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated.", aur);
+        if (!choice.ok) return;
+        const bool aurStep = (aur > 0 && choice.aur) || choice.devel;
+        if (all && arch == 0 && !aurStep && !flatpaks && images.isEmpty()) return;
+        runUpdateScript(title, !all || arch > 0, aurStep, choice.devel, all && flatpaks > 0, all ? images : QList<UpdateEntry>{});
+    }
+
+    void runUpdateOne(const UpdateEntry &entry) {
+        if (entry.source == "Flatpak") startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id});
+        else runUpdateScript("Update " + entry.name, false, false, false, false, {entry});
+    }
+
+    void runUpdateScript(const QString &title, bool system, bool aur, bool devel, bool flatpak, const QList<UpdateEntry> &images) {
+        QStringList names, items;
+        const QString script = updateScript(system, aur, devel, flatpak, !images.isEmpty(), &names);
+        for (const auto &entry : images) items << entry.id + '\t' + entry.url + '\t' + entry.name;
+        auto current = std::make_shared<int>(0);
+        const auto stepOf = [names, current](const QString &text) {
+            for (int i = 0; i < names.size(); ++i) if (text.contains("==> " + names[i])) *current = i;
+            return *current;
+        };
+        startJob(title, "bash", QStringList{"-c", script, "woof-store-update", QCoreApplication::applicationFilePath()} + items, {}, names, stepOf);
+    }
+
+    // A link from the desktop ("appstream://org.mozilla.firefox", which KRunner and web pages use for "Install this app") or a plain name.
+    // Known apps open on their details page; anything else becomes an Explore search.
+public:
+    void openRequest(QString text) {
+        raise(); activateWindow(); showNormal();
+        text = text.trimmed();
+        if (text.startsWith("appstream:", Qt::CaseInsensitive)) text = text.mid(10);
+        while (text.startsWith('/')) text.remove(0, 1);
+        if (text.endsWith(".desktop")) text.chop(8);
+        if (text.isEmpty()) return;
+        if (backend.apps.isEmpty()) { pendingRequest = text; selectPage(0); return; }  // The catalogue is still loading
+        pendingRequest.clear();
+        for (const auto &app : backend.apps)
+            if (!app.componentId.compare(text, Qt::CaseInsensitive) || !app.key.compare(text, Qt::CaseInsensitive) || !app.desktopId.compare(text, Qt::CaseInsensitive)) { selectPage(0); explore->openPreview(app); return; }
+        selectPage(0); explore->search->setText(text); explore->applyFilters();
+    }
+    QString pendingRequest;
+private:
+    // Orphans: packages installed as dependencies that nothing needs any more. The user ticks the ones to remove.
+public:
+    void showOrphans(bool onlyIfAny = false) {
+        backend.orphans([this, onlyIfAny](QList<Orphan> orphans) { if (!orphans.isEmpty() || !onlyIfAny) orphanDialog(orphans); });
+    }
+    QDialog *orphanDialog(const QList<Orphan> &orphans) {
+        {
+            auto *dialog = new QDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose); dialog->setObjectName("orphansDialog"); dialog->setWindowTitle("Orphan packages");
+            auto *layout = new QVBoxLayout(dialog); layout->setSpacing(12); layout->setSizeConstraint(QLayout::SetMinimumSize);
+            layout->addWidget(label("Orphan packages", 18, true));
+            auto *hint = label(orphans.isEmpty() ? "No orphan packages. Nothing to clean up." : "These were installed to support other software and nothing needs them any more. Tick the ones to remove: their settings files in /etc go too (pacman -Rns).");
+            hint->setForegroundRole(QPalette::PlaceholderText); hint->setMinimumWidth(460); layout->addWidget(hint);
+            auto *list = new QListWidget; list->setObjectName("orphanList"); list->setMinimumHeight(orphans.isEmpty() ? 0 : 240); list->setVisible(!orphans.isEmpty());
+            for (const auto &orphan : orphans) {
+                auto *item = new QListWidgetItem(orphan.size.isEmpty() ? orphan.name : orphan.name + "  ·  " + orphan.size, list);
+                item->setData(Qt::UserRole, orphan.name); item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(Qt::Unchecked);
+            }
+            layout->addWidget(list, 1);
+            auto *all = new QPushButton("Select all"); all->setObjectName("orphanSelectAll"); all->setVisible(!orphans.isEmpty());
+            auto *remove = new QPushButton("Remove selected"); remove->setObjectName("orphanRemove"); remove->setEnabled(false); remove->setVisible(!orphans.isEmpty());
+            auto *close = new QPushButton("Close");
+            auto *buttons = new QHBoxLayout; buttons->addWidget(close); buttons->addStretch(); buttons->addWidget(all); buttons->addWidget(remove);
+            layout->addLayout(buttons);
+            auto chosen = [list] { QStringList names; for (int i = 0; i < list->count(); ++i) if (list->item(i)->checkState() == Qt::Checked) names << list->item(i)->data(Qt::UserRole).toString(); return names; };
+            auto refreshButtons = [=] {
+                const int n = int(chosen().size());
+                remove->setEnabled(n > 0); remove->setText(n ? QString("Remove selected (%1)").arg(n) : "Remove selected");
+                all->setText(n == list->count() ? "Select none" : "Select all");
+            };
+            connect(list, &QListWidget::itemChanged, dialog, refreshButtons);
+            connect(all, &QPushButton::clicked, dialog, [=] { const bool everything = chosen().size() < list->count(); for (int i = 0; i < list->count(); ++i) list->item(i)->setCheckState(everything ? Qt::Checked : Qt::Unchecked); });
+            connect(close, &QPushButton::clicked, dialog, &QDialog::close);
+            connect(remove, &QPushButton::clicked, dialog, [=] {
+                const QStringList names = chosen();
+                if (names.isEmpty() || QMessageBox::question(dialog, "Remove packages", QString("Remove %1 package(s)? This cannot be undone.").arg(names.size())) != QMessageBox::Yes) return;
+                dialog->close();
+                startJob("Remove orphan packages", "pkexec", QStringList{"pacman", "-Rns", "--noconfirm"} + names);
+            });
+            dialog->show();
+            return dialog;
+        }
+    }
+private:
+    // A new kernel is installed but the old one still runs: tell the user through the desktop notifications.
+    void checkReboot() {
+        if (rebootNotified || !QDir("/usr/lib/modules").exists() || QFileInfo::exists("/usr/lib/modules/" + QSysInfo::kernelVersion() + "/vmlinuz")) return;
+        rebootNotified = true;
+        const QString service = "org.freedesktop.Notifications", path = "/org/freedesktop/Notifications";
+        auto bus = QDBusConnection::sessionBus();
+        bus.connect(service, path, service, "ActionInvoked", this, SLOT(notificationAction(uint,QString)));
+        auto message = QDBusMessage::createMethodCall(service, path, service, "Notify");
+        QVariantMap hints; hints["desktop-entry"] = "io.github.laskywolf.WoofStore";
+        message << "WoofStore" << uint(0) << "system-reboot" << "Restart to finish the update" << "A new kernel was installed. Restart when you are ready."
+                << QStringList{"restart", "Restart now"} << hints << int(0);
+        auto *watcher = new QDBusPendingCallWatcher(bus.asyncCall(message), this);
+        connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher] {
+            QDBusPendingReply<uint> reply = *watcher; watcher->deleteLater();
+            if (reply.isValid()) rebootNoticeId = reply.value();
+            else statusBar()->showMessage("Restart to finish the update: a new kernel was installed.", 15000);
+        });
+    }
+    Q_SLOT void notificationAction(uint id, const QString &key) {
+        if (id != rebootNoticeId || key != "restart") return;
+        if (QMessageBox::question(this, "Restart now?", "Save your work first. The computer restarts right away.") == QMessageBox::Yes) QProcess::startDetached("systemctl", {"reboot"});
+    }
+
+    // News: cards in two columns, the newest first. Unread news from Arch and CachyOS put the accent badge on the sidebar.
+    void buildNews() {
+        QVBoxLayout *content;
+        auto *body = scrollPage(&content); body->setObjectName("newsPageBody");
+        auto *scroll = static_cast<QScrollArea *>(pages->widget(pages->count() - 1)); scroll->setObjectName("newsPage");
+        content->setContentsMargins(20, 16, 20, 24); content->setSpacing(16);
+        auto *sticky = new StickyBar(scroll, content);
+        sticky->column->addWidget(label("News", 23, true));
+        auto *row = new QHBoxLayout; row->setSpacing(8);
+        newsSearch = new QLineEdit; newsSearch->setObjectName("newsSearch"); newsSearch->setPlaceholderText("Search news"); newsSearch->setClearButtonEnabled(true);
+        newsSearch->setMinimumHeight(38); newsSearch->addAction(QIcon::fromTheme("edit-find"), QLineEdit::LeadingPosition); newsSearch->setAccessibleName("Search news");
+        auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshNews");
+        refresh->setFixedSize(38, 38); refresh->setToolTip("Reload the news"); refresh->setAccessibleName("Reload the news"); refresh->setCursor(Qt::PointingHandCursor);
+        row->addWidget(newsSearch, 1); row->addWidget(refresh);
+        sticky->column->addLayout(row); sticky->fit();
+        newsStatus = label(""); newsStatus->setObjectName("newsStatus"); newsStatus->setForegroundRole(QPalette::PlaceholderText); content->addWidget(newsStatus);
+        newsLoadingBox = new QWidget; newsLoadingBox->setObjectName("newsLoading"); newsLoadingBox->setMinimumHeight(260);
+        auto *loadingLayout = new QVBoxLayout(newsLoadingBox); loadingLayout->setSpacing(14); loadingLayout->setAlignment(Qt::AlignCenter);
+        auto *loadingText = label("Loading the news…"); loadingText->setAlignment(Qt::AlignCenter);
+        loadingLayout->addStretch(); loadingLayout->addWidget(new Spinner(44), 0, Qt::AlignHCenter); loadingLayout->addWidget(loadingText); loadingLayout->addStretch();
+        content->addWidget(newsLoadingBox);
+        newsScroll = scroll; newsRow = new QHBoxLayout; newsRow->setSpacing(16); newsRow->setAlignment(Qt::AlignTop);
+        content->addLayout(newsRow);
+        newsMore = new QPushButton("Show more"); newsMore->setObjectName("newsMore"); newsMore->setCursor(Qt::PointingHandCursor);
+        content->addWidget(newsMore, 0, Qt::AlignHCenter); content->addStretch();
+        connect(newsMore, &QPushButton::clicked, this, [this] { ++newsExtra; renderNews(); });
+        scroll->viewport()->installEventFilter(new EventHook(this, [this](QObject *, QEvent *event) { if (event->type() == QEvent::Resize && newsColumnCount != columnsForWidth()) renderNews(); }));
+        connect(newsSearch, &QLineEdit::textChanged, this, [this] { newsExtra = 0; renderNews(); });
+        connect(refresh, &QPushButton::clicked, this, &Store::loadNews);
+        renderNews();
+    }
+    void loadNews() {
+        if (newsLoading) return;
+        newsLoading = true; renderNews();
+        backend.loadNews([this](QList<NewsItem> items, QStringList problems) {
+            newsLoading = false; news = items; newsProblems = problems;
+            if (!settings.contains("newsSeen") && newestImportantNews().isValid()) settings.setValue("newsSeen", newestImportantNews().toString(Qt::ISODate));  // The first start has nothing unread
+            renderNews(); refreshNewsBadge();
+        });
+    }
+    QDateTime newestImportantNews() const { QDateTime newest; for (const auto &item : news) if (item.important && item.date.isValid() && (!newest.isValid() || item.date > newest)) newest = item.date; return newest; }
+    QDateTime seenNews() const { return QDateTime::fromString(settings.value("newsSeen").toString(), Qt::ISODate); }
+    int unreadNews() const { const auto seen = seenNews(); int count = 0; for (const auto &item : news) if (item.important && item.date.isValid() && seen.isValid() && item.date > seen) ++count; return count; }
+    void refreshNewsBadge() {
+        auto *button = static_cast<NavButton *>(navigation->button(3));
+        button->badge = unreadNews(); button->badgeColor = palette().color(QPalette::Highlight); button->update();
+    }
+    void openedNews() {
+        newsPillSince = seenNews();
+        if (newestImportantNews().isValid()) settings.setValue("newsSeen", newestImportantNews().toString(Qt::ISODate));
+        refreshNewsBadge(); renderNews();
+    }
+    static QColor newsColor(const QString &source) {
+        static const QHash<QString, QColor> colors = {{"Arch Linux", "#1793d1"}, {"CachyOS", "#1abc9c"}, {"Linux kernel", "#f1c40f"}, {"KDE", "#3daee9"}, {"LWN.net", "#8e6bbf"}, {"9to5Linux", "#e74c3c"}, {"Phoronix", "#7f8c8d"}, {"GamingOnLinux", "#27ae60"}, {"OMG! Ubuntu", "#e95420"}, {"Fedora Magazine", "#3c6eb4"}, {"Linuxiac", "#16a085"}, {"It's FOSS", "#e67e22"}};
+        return colors.value(source, QColor("#6c757d"));
+    }
+    QWidget *newsCard(const NewsItem &item) {
+        auto *card = new ClickFrame; card->setObjectName("newsCard"); card->setAccessibleName(item.title + ", " + item.source); card->setToolTip(item.url);
+        card->onClick = [url = item.url] { QDesktopServices::openUrl(QUrl(url)); };
+        auto *outer = new QVBoxLayout(card); outer->setContentsMargins(0, 0, 0, 0); outer->setSpacing(0);
+        if (!item.image.isEmpty()) {
+            auto *cover = new CoverImage; outer->addWidget(cover);
+            const QUrl address = item.image.startsWith("/") ? QUrl::fromLocalFile(item.image) : QUrl(item.image);
+            backend.fetchImage(address, cover, [cover](QPixmap image) { cover->setPixmap(image); });
+        }
+        auto *inner = new QWidget; outer->addWidget(inner);
+        auto *layout = new QVBoxLayout(inner); layout->setContentsMargins(16, 14, 16, 16); layout->setSpacing(8);
+        auto *top = new QHBoxLayout; top->setSpacing(8);
+        auto *swatch = new QFrame; swatch->setFixedSize(10, 10); swatch->setStyleSheet(QString("background: %1; border-radius: 3px;").arg(newsColor(item.source).name()));
+        auto *source = label(item.source, 0, true); source->setWordWrap(false);
+        top->addWidget(swatch); top->addWidget(source);
+        if (item.important && item.date.isValid() && newsPillSince.isValid() && item.date > newsPillSince) {
+            auto *fresh = new QLabel("New"); fresh->setObjectName("newsFresh");
+            fresh->setStyleSheet("background: palette(highlight); color: palette(highlighted-text); border-radius: 8px; padding: 1px 8px; font-weight: 600;");
+            top->addWidget(fresh);
+        }
+        top->addStretch();
+        auto *date = label(item.date.isValid() ? QLocale().toString(item.date.date(), QLocale::ShortFormat) : QString()); date->setForegroundRole(QPalette::PlaceholderText); date->setWordWrap(false);
+        top->addWidget(date);
+        layout->addLayout(top);
+        layout->addWidget(label(item.title, 0, true));
+        if (!item.summary.isEmpty()) { auto *summary = label(item.summary); summary->setForegroundRole(QPalette::PlaceholderText); layout->addWidget(summary); }
+        return card;
+    }
+    int columnsForWidth() const { return newsScroll->viewport()->width() >= 900 ? 3 : 2; }
+    void renderNews() {
+        while (auto *column = newsRow->takeAt(0)) {
+            if (auto *layout = column->layout()) while (auto *item = layout->takeAt(0)) { delete item->widget(); delete item; }
+            delete column;
+        }
+        newsColumnCount = columnsForWidth();
+        QList<QVBoxLayout *> columns; QList<int> weight(newsColumnCount, 0);
+        for (int i = 0; i < newsColumnCount; ++i) { auto *column = new QVBoxLayout; column->setSpacing(16); column->setAlignment(Qt::AlignTop); newsRow->addLayout(column, 1); columns << column; }
+        const QString needle = newsSearch->text().trimmed();
+        // A clean page: two articles per source and about fifteen in all, until "Show more"; a search looks at everything.
+        const int perSource = 2 + 2 * newsExtra, total = 15 + 12 * newsExtra;
+        int shown = 0, hidden = 0; QHash<QString, int> perSourceCount;
+        for (const auto &item : news) {
+            if (!needle.isEmpty() && !(item.title + ' ' + item.summary + ' ' + item.source).contains(needle, Qt::CaseInsensitive)) continue;
+            if (needle.isEmpty() && (shown >= total || perSourceCount[item.source] >= perSource)) { ++hidden; continue; }
+            ++perSourceCount[item.source];
+            const int side = int(std::min_element(weight.begin(), weight.end()) - weight.begin());  // The shortest column takes the next card
+            weight[side] += 70 + (item.image.isEmpty() ? 0 : 160) + int(item.title.size()) * 2 + int(item.summary.size());
+            columns[side]->addWidget(newsCard(item)); ++shown;
+        }
+        newsMore->setVisible(hidden > 0);
+        if (hidden > 0) newsMore->setText(QString("Show more (%1)").arg(hidden));
+        QString message;
+        newsLoadingBox->setVisible(newsLoading && shown == 0);
+        if (newsLoading) message = shown ? "Reloading the news…" : QString();
+        else if (!shown) message = news.isEmpty() ? "Couldn't load the news. " + newsProblems.join("; ") : "No news matches your search.";
+        else if (!newsProblems.isEmpty()) message = "Not reachable now: " + newsProblems.join("; ");
+        newsStatus->setText(message); newsStatus->setVisible(!message.isEmpty());
     }
 
     void checkForUpdates() {
@@ -814,8 +1130,13 @@ private:
         checkUpdates->setEnabled(!updateChecking);
         updateStatus->setText(updateChecking ? "Checking…" : updatesChecked ? "Checked at " + lastUpdateCheck.toString("HH:mm") : QString());
         const bool listed = !pendingUpdates.isEmpty();
-        updatesPanel->setVisible(listed); updatesEmpty->setVisible(!listed); updateAll->setVisible(listed);
-        static_cast<NavButton *>(navigation->button(2))->badge = int(pendingUpdates.size()); navigation->button(2)->update();
+        int systemCount = 0; for (const auto &entry : pendingUpdates) if (entry.source == "Arch" || entry.source == "AUR") ++systemCount;
+        updatesPanel->setVisible(listed); updatesEmpty->setVisible(!listed); updateAll->setVisible(listed); systemUpdate->setVisible(true);
+        systemUpdate->setProperty("pending", systemCount > 0); systemUpdate->setIcon(lucideIcon("package", 20, palette().color(systemCount > 0 ? QPalette::HighlightedText : QPalette::WindowText))); systemUpdate->style()->unpolish(systemUpdate); systemUpdate->style()->polish(systemUpdate);
+        systemUpdate->setToolTip(systemCount > 0 ? "Update the Arch and AUR packages together, as a full system upgrade" : "Sync the package databases, update, and list orphan packages");
+        // Red when the system itself is behind, the accent colour when only apps are.
+        auto *updatesNav = static_cast<NavButton *>(navigation->button(2));
+        updatesNav->badge = int(pendingUpdates.size()); updatesNav->badgeColor = systemCount > 0 ? QColor("#da4453") : palette().color(QPalette::Highlight); updatesNav->update();
         if (!listed) {
             const bool failed = updatesChecked && !updateProblems.isEmpty();
             QString glyph = "circle-check"; QColor color("#27ae60");
@@ -832,8 +1153,7 @@ private:
         // Apps: Flatpaks, and Arch packages that have a menu entry. Everything else is system.
         QList<UpdateEntry> apps, system; QHash<QString, const App *> installedById;
         for (const auto &installed : backend.installed) if (installed.source == "Arch" || installed.source == "AUR / local") installedById.insert(installed.id, &installed);
-        for (const auto &entry : pendingUpdates) (entry.source == "Flatpak" || installedById.contains(entry.id) ? apps : system).append(entry);
-        int flatpaks = 0; for (const auto &entry : apps) if (entry.source == "Flatpak") ++flatpaks;
+        for (const auto &entry : pendingUpdates) (entry.source == "Flatpak" || entry.source == "AppImage" || installedById.contains(entry.id) ? apps : system).append(entry);
         auto group = [this, &installedById](const QString &title, const QList<UpdateEntry> &entries, const QString &name) {
             if (entries.isEmpty()) return;
             updatesRows->addWidget(label(QString("%1 · %2").arg(title).arg(entries.size()), 0, true));
@@ -843,7 +1163,7 @@ private:
             for (const auto &entry : entries) {
                 const App *known = entry.source == "Flatpak" ? nullptr : installedById.value(entry.id, nullptr);
                 QIcon icon = QIcon::fromTheme(entry.source == "Flatpak" ? entry.id : "package-x-generic", QIcon::fromTheme(entry.source == "Flatpak" ? "application-x-executable" : "package-x-generic"));
-                if (entry.source == "Flatpak") { for (const auto &installed : backend.installed) if (installed.id == entry.id && !installed.icon.isNull()) icon = installed.icon; }
+                if (entry.source == "Flatpak" || entry.source == "AppImage") { for (const auto &installed : backend.installed) if (installed.id == entry.id && !installed.icon.isNull()) icon = installed.icon; }
                 else if (known && !known->icon.isNull()) icon = known->icon;
                 auto *row = new QWidget; row->setObjectName("updateRow"); auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 6, 0, 6); layout->setSpacing(12);
                 auto *symbol = new QLabel; symbol->setFixedSize(40, 40); symbol->setPixmap(icon.pixmap(40, 40));
@@ -854,12 +1174,12 @@ private:
                 if (!entry.from.isEmpty()) { version->setTextFormat(Qt::RichText); version->setText(change.first + "&nbsp;&nbsp;→&nbsp;&nbsp;" + change.second); }
                 copy->addWidget(title); copy->addWidget(version);
                 layout->addWidget(symbol); layout->addLayout(copy, 1);
-                if (entry.source == "Flatpak" || known) {
+                if (entry.source == "Flatpak" || entry.source == "AppImage" || known) {
                     auto *update = new QPushButton(QIcon::fromTheme("system-software-update"), "Update"); update->setMinimumHeight(34); update->setCursor(Qt::PointingHandCursor);
-                    if (entry.source == "Flatpak") {
+                    if (entry.source == "Flatpak" || entry.source == "AppImage") {
                         update->setObjectName("updateOne");
-                        connect(update, &QPushButton::clicked, this, [this, entry] { startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id}); });
-                    } else { update->setEnabled(false); update->setToolTip("This package updates with the system update, which arrives in the next version."); }
+                        connect(update, &QPushButton::clicked, this, [this, entry] { runUpdateOne(entry); });
+                    } else { update->setEnabled(false); update->setToolTip("This package updates with System Update, because Arch does not support updating one package alone."); }
                     layout->addWidget(update);
                 }
                 layout->addWidget(new SourceBadge(entry.source));
@@ -869,8 +1189,6 @@ private:
         };
         group("Apps", apps, "appUpdates");
         group("System packages", system, "systemUpdates");
-        updateAll->setEnabled(flatpaks > 0);
-        updateAll->setToolTip(flatpaks > 0 ? QString() : "Only system updates are pending. They arrive in the next version.");
     }
 
     void openInstalledItem(QListWidgetItem *item) {
@@ -1000,11 +1318,24 @@ static const CatalogApp &fixtureApp(const Backend &backend, const QString &name)
     qFatal("Fixture app %s is missing", qPrintable(name));
 }
 
+// What other programs can ask the running store to do, over the session bus.
+class OpenService : public QObject {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "io.github.laskywolf.WoofStore")
+public:
+    explicit OpenService(Store *store) : QObject(store), store(store) {}
+public Q_SLOTS:
+    void Open(const QString &link) { store->openRequest(link); }
+private:
+    Store *store;
+};
+
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
     // Headless previews have no desktop menu-bar service.
     if (application.platformName() == "offscreen") application.setAttribute(Qt::AA_DontUseNativeMenuBar);
     application.setApplicationName("WoofStore");
+    application.setDesktopFileName("io.github.laskywolf.WoofStore");  // Matches the installed launcher, so the task bar shows the right icon
     application.setApplicationDisplayName("WoofStore");
     application.setOrganizationName("WoofStore");
     if (geteuid() == 0) { qCritical("Run WoofStore as your normal user. Package managers request elevation when needed."); return 1; }
@@ -1015,6 +1346,7 @@ int main(int argc, char **argv) {
     parser.addHelpOption();
     parser.addOption({"screenshot", "Save an offscreen UI preview and exit (does not install software).", "path"});
     parser.addOption({"import-appimage", "Copy an AppImage into the app menu and exit (used by the install window).", "path"});
+    parser.addOption({"replaces", "With --import-appimage: the id of the imported AppImage this file updates; the old copy is removed.", "id"});
     parser.addOption({"installed-open", "Open the first Installed app in the main detail view."});
     parser.addOption({"explore-end", "Preview the Load more button at the directory end."});
     parser.addOption({"activity-sidebar", "Preview simulated progress in the sidebar."});
@@ -1025,7 +1357,7 @@ int main(int argc, char **argv) {
     parser.addOption({"list-selected", "Show the first list selection in a preview."});
     parser.addOption({"updates-preview", "Preview an update state without package commands: idle, checking, failed.", "state"});
     parser.addOption({"installed-preview", "Show a labeled sample Installed layout without package operations."});
-    parser.addOption({"page", "Preview page: explore, installed, updates.", "page", "explore"});
+    parser.addOption({"page", "Preview page: explore, installed, updates, news.", "page", "explore"});
     parser.addOption({"compact", "Use a narrow desktop preview."});
     parser.addOption({"expanded", "Show the expanded sidebar in a preview."});
     parser.addOption({"collapsed", "Show the icon-only sidebar in a preview."});
@@ -1046,7 +1378,9 @@ int main(int argc, char **argv) {
     parser.addOption({"terminal-demo", "Run a harmless prompt test in the embedded terminal."});
     parser.addOption({"terminal-check", "Automatically test the embedded terminal without system changes."});
     parser.addOption({"live-catalog", "Use the live software sources in a screenshot preview instead of the test catalogue."});
+    parser.addOption({"orphans-preview", "Save a picture of the orphan packages window, with sample packages, and exit.", "path"});
     parser.addOption({"catalog-stats", "Load every software source, print catalogue counts and memory use, then exit."});
+    parser.addPositionalArgument("link", "An appstream: link or an app name to open.", "[link]");
     parser.process(application);
     if (parser.isSet("import-appimage")) {
         int failures = 0;
@@ -1054,7 +1388,8 @@ int main(int argc, char **argv) {
         for (const QString &file : parser.values("import-appimage")) {
             std::printf("==> Copying %s\n", qPrintable(QFileInfo(file).fileName())); std::fflush(stdout);
             QString error;
-            if (importAppImage(file, dataRoot, &error).isEmpty()) { std::printf("error: %s\n", qPrintable(error)); ++failures; }
+            const QString replaces = parser.value("replaces");
+            if ((replaces.isEmpty() ? importAppImage(file, dataRoot, &error) : replaceAppImage(file, replaces, dataRoot, &error)).isEmpty()) { std::printf("error: %s\n", qPrintable(error)); ++failures; }
             else std::printf("==> Adding to the app menu\n");
             std::fflush(stdout);
         }
@@ -1067,8 +1402,25 @@ int main(int argc, char **argv) {
     application.setPalette(p);
     QTemporaryDir sidebarCheckConfig;
     if (parser.isSet("prototype-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check")) qputenv("XDG_CONFIG_HOME", sidebarCheckConfig.path().toUtf8());
+    // One window per user: a second start (a KRunner suggestion, a link, the menu) hands its request to the running one.
+    const bool interactive = !(parser.isSet("screenshot") || parser.isSet("prototype-check") || parser.isSet("activity-preview") || parser.isSet("updates-preview") || parser.isSet("installed-preview") || parser.isSet("terminal-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check") || parser.isSet("terminal-demo") || parser.isSet("orphans-preview"));
+    const QString request = parser.positionalArguments().value(0);
+    auto bus = QDBusConnection::sessionBus();
+    if (interactive && bus.isConnected() && !bus.registerService("io.github.laskywolf.WoofStore")) {
+        QDBusMessage call = QDBusMessage::createMethodCall("io.github.laskywolf.WoofStore", "/", "io.github.laskywolf.WoofStore", "Open");
+        call << request;
+        if (bus.call(call, QDBus::Block, 5000).type() != QDBusMessage::ErrorMessage) return 0;
+    }
     Store store(parser.isSet("live-catalog") || (!parser.isSet("screenshot") && !parser.isSet("prototype-check") && !parser.isSet("activity-preview") && !parser.isSet("updates-preview") && !parser.isSet("installed-preview") && !parser.isSet("terminal-check") && !parser.isSet("sidebar-check") && !parser.isSet("explore-check")));
+    if (parser.isSet("orphans-preview")) {
+        auto *dialog = store.orphanDialog({{"python-pyparsing", "1.1 MiB"}, {"libfoo", "0.4 MiB"}, {"gst-plugins-bad-libs", "7.9 MiB"}, {"qt5-base", "58.3 MiB"}});
+        QTimer::singleShot(400, dialog, [dialog, &parser, &application] { dialog->grab().save(parser.value("orphans-preview")); application.quit(); });
+        return application.exec();
+    }
     store.show();
+    OpenService service(&store);
+    if (interactive && bus.isConnected()) bus.registerObject("/", &service, QDBusConnection::ExportAllSlots);
+    if (interactive && !request.isEmpty()) store.openRequest(request);
     if (parser.isSet("prototype-check")) {
         store.previewInstalled();
         auto *page = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
@@ -1080,7 +1432,7 @@ int main(int argc, char **argv) {
         details->back->click(); store.selectPage(1);
         {   // The two cards take only their own file type, and nothing is installed by a check
             QTemporaryDir droppedFiles;
-            auto make = [&](const QString &name) { const QString path = droppedFiles.path() + '/' + name; QFile file(path); file.open(QIODevice::WriteOnly); file.write("fixture"); return QUrl::fromLocalFile(path); };
+            auto make = [&](const QString &name) { const QString path = droppedFiles.path() + '/' + name; QFile file(path); if (file.open(QIODevice::WriteOnly)) file.write("fixture"); return QUrl::fromLocalFile(path); };
             const QUrl appImage = make("Zzz-preview.AppImage"), flatpakRef = make("Zzz-flatpak.flatpakref");
             auto *appImageCard = static_cast<DropCard *>(store.findChild<QAbstractButton *>("addAppImage")), *flatpakCard = static_cast<DropCard *>(store.findChild<QAbstractButton *>("addFlatpak"));
             QT_WARNING_PUSH
@@ -1102,7 +1454,30 @@ int main(int argc, char **argv) {
         passed &= page->loadMore->isHidden();  // The fixture fits in one page
         store.previewUpdates("available");
         passed &= !store.findChild<QWidget *>("updateResults")->isHidden() && store.findChild<QWidget *>("updatesEmpty")->isHidden()
-            && store.findChildren<QPushButton *>("updateOne").size() == 2 && store.findChild<QPushButton *>("updateAll")->isVisible() && store.findChild<QFrame *>("systemUpdates");
+            && store.findChildren<QPushButton *>("updateOne").size() == 3 && store.findChild<QPushButton *>("updateAll")->isVisible() && store.findChild<QFrame *>("systemUpdates");
+        auto *updatesNav = static_cast<NavButton *>(store.findChild<QAbstractButton *>("navUpdates"));
+        passed &= store.findChild<QPushButton *>("systemUpdate")->property("pending").toBool() && updatesNav->badge == 6 && updatesNav->badgeColor == QColor("#da4453");
+        store.previewUpdates("apps");
+        passed &= !store.findChild<QPushButton *>("systemUpdate")->property("pending").toBool() && store.findChild<QPushButton *>("systemUpdate")->isVisible() && store.findChild<QPushButton *>("updateAll")->isEnabled() && updatesNav->badge == 3 && updatesNav->badgeColor == store.palette().color(QPalette::Highlight);
+        {   // The orphan window: a stand-in pacman lists two orphans
+            QTemporaryDir bin; QFile stub(bin.path() + "/pacman"); passed &= stub.open(QIODevice::WriteOnly); stub.write("#!/bin/sh\nprintf 'libfoo\\nbar-git\\n'\n"); stub.close(); stub.setPermissions(stub.permissions() | QFile::ExeOwner);
+            const QByteArray oldPath = qgetenv("PATH"); qputenv("PATH", bin.path().toUtf8() + ":" + oldPath);
+            store.showOrphans();
+            QEventLoop wait; QTimer::singleShot(2500, &wait, &QEventLoop::quit); wait.exec();
+            qputenv("PATH", oldPath);
+            auto *list = store.findChild<QListWidget *>("orphanList"); auto *remove = store.findChild<QPushButton *>("orphanRemove"); auto *all = store.findChild<QPushButton *>("orphanSelectAll");
+            const bool shown = list && remove && all && list->count() == 2 && !remove->isEnabled();
+            if (shown) all->click();
+            passed &= shown && remove->isEnabled() && remove->text() == "Remove selected (2)" && all->text() == "Select none";
+            if (shown) all->click();
+            passed &= shown && !remove->isEnabled();
+            if (auto *dialog = store.findChild<QDialog *>("orphansDialog")) dialog->close();
+        }
+        store.previewNews();
+        passed &= store.findChildren<QFrame *>("newsCard").size() == 6 && store.findChildren<QLabel *>("newsFresh").size() == 1;
+        store.findChild<QLineEdit *>("newsSearch")->setText("plasma");
+        passed &= store.findChildren<QFrame *>("newsCard").size() == 1;
+        store.findChild<QLineEdit *>("newsSearch")->setText("");
         store.previewUpdates("idle");
         passed &= store.findChild<QWidget *>("updateResults")->isHidden() && store.findChild<QLabel *>("updatesTitle")->text() == "You're all up to date";
         CatalogApp longApp; longApp.key = "test-long-description"; longApp.name = "Long description"; longApp.origin = MetadataOrigin::AppStream;
@@ -1523,6 +1898,7 @@ int main(int argc, char **argv) {
     if (parser.value("page") == "installed") store.selectPage(1);
     if (parser.isSet("installed-preview")) store.previewInstalled();
     if (parser.value("page") == "updates") store.selectPage(2);
+    if (parser.value("page") == "news") store.previewNews();
     if (parser.isSet("updates-preview")) store.previewUpdates(parser.value("updates-preview"));
     if (parser.isSet("installed-open")) {
         auto *list = store.findChild<QListWidget *>("installedApps");
@@ -1593,7 +1969,7 @@ int main(int argc, char **argv) {
                 });
                 QTimer::singleShot(5000, &store, capture);
             });
-        } else if (parser.value("page") == "explore" || parser.isSet("installed-preview") || parser.isSet("updates-preview")) {
+        } else if (parser.value("page") == "explore" || parser.value("page") == "news" || parser.isSet("installed-preview") || parser.isSet("updates-preview")) {
             QTimer::singleShot(500, &store, [&store, &parser] {
                 auto *details = static_cast<AppDetailsPage *>(store.findChild<QWidget *>("appDetailsPage"));
                 if (parser.isSet("details-gallery")) details->showGallery();

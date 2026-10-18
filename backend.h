@@ -28,14 +28,36 @@ QList<Launcher> scanLaunchers(const QStringList &dirs, const QString &language);
 // Both versions as rich text with only the part that changed coloured: the old one red, the new one green.
 QPair<QString, QString> versionDiff(const QString &from, const QString &to);
 
-struct UpdateEntry { QString id, name, from, to, source; };  // source: Flatpak, Arch or AUR
+struct UpdateEntry { QString id, name, from, to, source, url; };  // source: Flatpak, Arch, AUR or AppImage; url: where an AppImage update downloads from
 QList<UpdateEntry> parseArchUpdates(const QString &text, const QString &source);
 QList<UpdateEntry> parseFlatpakUpdates(const QString &text, const QHash<QString, QString> &installedVersions);
+
+// Where an AppImage says its newer versions are, read from the ".upd_info" section the publisher embedded. Empty when it has none.
+QString appImageUpdateInfo(const QString &file);
+struct UpdateInfo { QString zsyncUrl, owner, repo, tag, pattern; };  // zsyncUrl is set for "zsync|url"; owner, repo, tag and pattern for "gh-releases-zsync|..."
+std::optional<UpdateInfo> parseUpdateInfo(const QString &info);
+// The "SHA-1:" line of a .zsync file is the checksum of the newest file; equal to the installed file's checksum means up to date.
+QString zsyncSha1(const QByteArray &header);
+// The release asset matching the publisher's pattern, with the address of its .zsync file; empty when there is none.
+struct ReleaseAsset { QString url, zsyncUrl, version; };
+ReleaseAsset pickReleaseAsset(const QByteArray &releaseJson, const QString &pattern);
+
+// A news item from a feed or a blog. important: from the distribution itself, so it counts for the sidebar badge.
+struct NewsItem { QString source, title, summary, url; QDateTime date; bool important = false; QString image; };  // image: address of the cover picture, empty when the feed has none
+QList<NewsItem> parseFeed(const QByteArray &xml, const QString &source, bool important);
+QList<NewsItem> parseCachyBlog(const QString &html);
 
 QString plainDescription(const QString &html);
 QString desktopQuote(const QString &path);
 bool validPackageName(const QString &name);
+struct Orphan { QString name, size; };
+QList<Orphan> parseOrphans(const QString &text);  // Lines of "name" or "name<TAB>size"; names pacman would not accept are dropped
 QString importAppImage(const QString &file, const QString &dataRoot, QString *error);
+// The bash script of an update run: $1 is this program, the other arguments are "id<TAB>url<TAB>name" per AppImage. Each step prints "==> <name>" first.
+// A failed system upgrade stops everything; a failed AUR, Flatpak or AppImage step is reported and the script goes on, ending with status 1.
+QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames);
+// Imports a newer file of an imported AppImage and removes the old copy and its launcher; the old one stays when the import fails.
+QString replaceAppImage(const QString &file, const QString &oldId, const QString &dataRoot, QString *error);
 Apps importedAppImages(const QString &dataRoot);
 QStringList metadataDirs();
 
@@ -64,6 +86,8 @@ public:
     // Forget the saved web answers and download the rankings and the installed list again.
     void refresh();
     void checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> done);
+    // Newest first, from the Arch, CachyOS, kernel, KDE, LWN, 9to5Linux, Phoronix, GamingOnLinux, OMG! Ubuntu, Fedora Magazine, Linuxiac and It's FOSS feeds; problems lists the sources that did not answer.
+    void loadNews(std::function<void(QList<NewsItem>, QStringList)> done);
     QSet<QString> nativePackages;  // Installed packages from the sync repos (pacman -Qqn); the Installed page lists only foreign ones
     // Test and preview data in place of the live sources: {apps, rankings, aur}. Emits catalogReady and rankingsReady.
     bool loadFixture(const QString &path);
@@ -74,6 +98,7 @@ public:
     void prepareAur(const App &app, std::function<void(QString, QString, QString)> done);
     bool reviewedFilesUnchanged(QString *error) const;
     QString reviewPath() const;
+    void orphans(std::function<void(QList<Orphan>)> done);  // Packages installed as dependencies that nothing needs any more
     void readCommand(const QString &program, const QStringList &args,
                      std::function<void(int, QString, QString)> done, int timeout = 30000);
 signals:
@@ -95,6 +120,8 @@ private:
     MergeOverrides overrides;
     QHash<QString, QList<CatalogApp>> fixtureAddons;  // Add-ons by app key, from loadFixture
     int pendingSources = 0;
+    void checkAppImages(std::function<void(QList<UpdateEntry>, QStringList)> done);
+    void fetch(const QUrl &url, std::function<void(QByteArray, QString)> done, qint64 firstBytes = 0);
     void loadRepos();
     void loadAur();
     void sourceDone();

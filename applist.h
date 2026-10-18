@@ -46,7 +46,11 @@ public:
         };
         addText(name, true); if (!summary.isEmpty()) addText(summary, false); copy->addStretch();
         layout->addLayout(copy, 1);
-        if (badge.isEmpty() && !metadata.isEmpty()) {
+        const QStringList kinds = metadata.split(" · ");
+        const bool onlySources = !kinds.isEmpty() && std::all_of(kinds.begin(), kinds.end(), [](const QString &kind) { return kind == "Repo" || kind == "Flatpak" || kind == "AUR"; });
+        if (badge.isEmpty() && onlySources) {  // Where the app can be installed from, as the same marks the Installed page uses
+            for (const QString &kind : kinds) { auto *mark = new SourceBadge(kind == "Repo" ? "Arch" : kind, 24); mark->setObjectName("sourceMark"); mark->setToolTip(kind == "Repo" ? "Arch repositories" : kind); layout->addWidget(mark, 0, Qt::AlignVCenter); }
+        } else if (badge.isEmpty() && !metadata.isEmpty()) {
             auto *source = new QLabel(metadata); source->setTextFormat(Qt::PlainText); source->setWordWrap(true);
             source->setAlignment(Qt::AlignRight | Qt::AlignVCenter); source->setMaximumWidth(180);
             QFont font = source->font(); font.setPointSize(10); source->setFont(font);
@@ -64,6 +68,7 @@ public:
                 if (available) operations->bind(button, id, name, action);
                 else {
                     button->setEnabled(false);
+                    auto *fade = new QGraphicsOpacityEffect(button); fade->setOpacity(.4); button->setGraphicsEffect(fade);  // This style does not dim a disabled label by itself
                     button->setToolTip(iconOnly ? "This app has no package to remove here." : "Reinstall isn't available for this app.");
                 }
                 if (iconOnly && available) button->setToolTip("Remove");

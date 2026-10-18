@@ -188,10 +188,11 @@ public:
     QStringList stepNames; int step = 0;
 
     explicit JobDialog(const QString &title, const QStringList &names = {}, QWidget *parent = nullptr) : QDialog(parent), stepNames(names.isEmpty() ? QStringList{"Prepare", "Install"} : names) {
-        setObjectName("jobDialog"); setWindowTitle(title); setMinimumWidth(560);
+        setObjectName("jobDialog"); setWindowTitle(title);  // No setMinimumWidth: it would stop the layout from setting the window minimum
         auto *layout = new QVBoxLayout(this); layout->setSpacing(12);
+        layout->setSizeConstraint(QLayout::SetMinimumSize);  // The window never gets smaller than its contents, so nothing overlaps
         auto *heading = new QLabel(title); QFont font = heading->font(); font.setPointSize(font.pointSize() + 4); font.setBold(true); heading->setFont(font);
-        track = new StepTrack(stepNames);
+        track = new StepTrack(stepNames); track->setMinimumWidth(520);
         phase = new QLabel("Starting…"); phase->setWordWrap(true); phase->setTextFormat(Qt::PlainText); phase->setAlignment(Qt::AlignHCenter);
         phase->setForegroundRole(QPalette::PlaceholderText);
         details = new QToolButton; details->setText("Show details"); details->setCheckable(true); details->setAutoRaise(true); details->setArrowType(Qt::RightArrow); details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);

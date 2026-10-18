@@ -23,6 +23,7 @@
 #include <QStandardPaths>
 #include <QTextDocument>
 #include <QTimer>
+#include <QXmlStreamReader>
 #include <QUrlQuery>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
@@ -32,6 +33,134 @@ QString plainDescription(const QString &html) {
     QTextDocument doc;
     doc.setHtml(html);
     return doc.toPlainText();
+}
+
+QString appImageUpdateInfo(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QByteArray head = file.read(64);
+    if (head.size() < 64 || head.left(4) != QByteArray("\x7f" "ELF", 4) || head[4] != 2 || head[5] != 1) return {};  // 64-bit, little endian
+    auto number = [](const QByteArray &bytes, int at, int size) { quint64 value = 0; for (int i = size - 1; i >= 0; --i) value = (value << 8) | quint8(bytes[at + i]); return value; };
+    const quint64 tableAt = number(head, 0x28, 8), entry = number(head, 0x3A, 2), count = number(head, 0x3C, 2), namesIndex = number(head, 0x3E, 2);
+    if (!tableAt || entry < 64 || !count || count > 256 || namesIndex >= count || !file.seek(tableAt)) return {};
+    const QByteArray table = file.read(qint64(entry * count));
+    if (table.size() != qint64(entry * count)) return {};
+    auto bytesOf = [&](quint64 index, qint64 limit) {
+        const quint64 at = number(table, int(index * entry + 0x18), 8), size = number(table, int(index * entry + 0x20), 8);
+        return size <= quint64(limit) && file.seek(at) ? file.read(qint64(size)) : QByteArray();
+    };
+    const QByteArray names = bytesOf(namesIndex, 1 << 20);
+    for (quint64 i = 0; i < count; ++i) {
+        const quint64 nameAt = number(table, int(i * entry), 4);
+        if (nameAt >= quint64(names.size()) || QByteArray(names.constData() + nameAt) != ".upd_info") continue;
+        return QString::fromUtf8(QByteArray(bytesOf(i, 4096).constData())).trimmed();  // up to the first NUL
+    }
+    return {};
+}
+
+std::optional<UpdateInfo> parseUpdateInfo(const QString &info) {
+    const QStringList parts = info.split('|');
+    UpdateInfo result;
+    if (parts.value(0) == "zsync" && parts.size() >= 2 && parts[1].startsWith("https://")) { result.zsyncUrl = parts[1]; return result; }
+    if (parts.value(0) == "gh-releases-zsync" && parts.size() >= 5 && validPackageName(parts[1]) && validPackageName(parts[2]) && !parts[3].isEmpty() && !parts[4].isEmpty()) {
+        result.owner = parts[1]; result.repo = parts[2]; result.tag = parts[3]; result.pattern = parts[4];
+        return result;
+    }
+    return std::nullopt;
+}
+
+QString zsyncSha1(const QByteArray &header) {
+    static const QRegularExpression line("(?m)^SHA-1:\\s*([0-9a-fA-F]{40})\\s*$");
+    const auto match = line.match(QString::fromLatin1(header.left(4096)));
+    return match.hasMatch() ? match.captured(1).toLower() : QString();
+}
+
+ReleaseAsset pickReleaseAsset(const QByteArray &releaseJson, const QString &pattern) {
+    const auto release = QJsonDocument::fromJson(releaseJson).object();
+    const QRegularExpression wanted(QRegularExpression::wildcardToRegularExpression(pattern));
+    QMap<QString, QString> urls;
+    for (const auto &value : release.value("assets").toArray()) urls.insert(value.toObject().value("name").toString(), value.toObject().value("browser_download_url").toString());
+    // The publisher's pattern names the .zsync file; the AppImage itself has the same name without ".zsync".
+    for (auto it = urls.cbegin(); it != urls.cend(); ++it) {
+        if (!it.key().endsWith(".zsync") || !wanted.match(it.key()).hasMatch()) continue;
+        const QString imageName = it.key().chopped(6);
+        if (urls.contains(imageName)) return {urls.value(imageName), it.value(), release.value("tag_name").toString()};
+    }
+    return {};
+}
+
+// The first picture in a piece of HTML.
+static QString firstImage(const QString &html) {
+    static const QRegularExpression tag("<img[^>]+src=\"(https?://[^\"]+)\"");
+    const auto match = tag.match(html);
+    return match.hasMatch() ? match.captured(1) : QString();
+}
+// WordPress sites link small copies ("name-300x127.jpg"); the original has no size in its name.
+static QString fullSizeImage(QString url) {
+    static const QRegularExpression size("-\\d+x\\d+(\\.(?:jpe?g|png|webp))$");
+    if (url.contains("/wp-content/uploads/")) url.replace(size, "\\1");
+    return url;
+}
+
+QList<NewsItem> parseFeed(const QByteArray &xml, const QString &source, bool important) {
+    QList<NewsItem> items;
+    QXmlStreamReader reader(xml);
+    NewsItem item; bool inItem = false;
+    auto finish = [&] {
+        if (item.image.isEmpty()) item.image = firstImage(item.summary);
+        item.image = fullSizeImage(item.image);
+        item.summary = plainDescription(item.summary).remove(QChar::ObjectReplacementCharacter).simplified();
+        if (item.summary.size() > 220) item.summary = item.summary.left(217).trimmed() + "…";
+        if (!item.title.isEmpty() && item.url.startsWith("http")) items.append(item);
+    };
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (reader.isStartElement()) {
+            const QString name = reader.name().toString();
+            if (name == "item") { inItem = true; item = {}; item.source = source; item.important = important; }
+            else if (inItem && name == "title") item.title = reader.readElementText().simplified();
+            else if (inItem && name == "link") item.url = reader.readElementText().trimmed();
+            else if (inItem && name == "description") item.summary = reader.readElementText();
+            else if (inItem && name == "encoded") { const QString html = reader.readElementText(); if (item.image.isEmpty()) item.image = firstImage(html); }
+            else if (inItem && item.image.isEmpty() && (name == "enclosure" || name == "content" || name == "thumbnail")) {
+                const auto attributes = reader.attributes();
+                const QString url = attributes.value("url").toString(), type = attributes.value("type").toString(), medium = attributes.value("medium").toString();
+                const bool picture = name == "thumbnail" || type.startsWith("image/") || medium == "image" || (type.isEmpty() && url.contains(QRegularExpression("\\.(jpe?g|png|webp)(\\?|$)")));
+                if (picture && url.startsWith("http")) item.image = url;
+            }
+            else if (inItem && name == "pubDate") item.date = QDateTime::fromString(reader.readElementText().trimmed(), Qt::RFC2822Date);
+        } else if (reader.isEndElement() && reader.name() == QLatin1String("item")) { inItem = false; finish(); }
+    }
+    return items;
+}
+
+QList<NewsItem> parseCachyBlog(const QString &html) {
+    // Each post: <time datetime="..">date</time> ... <h2><a href="/blog/slug">Title</a></h2> ... <p>Summary</p>
+    static const QRegularExpression post("<time[^>]*>([^<]*)</time>.*?<h2[^>]*>\\s*<a[^>]*href=\"(/blog/[^\"]+)\"[^>]*>([^<]+)</a>\\s*</h2>.*?<p[^>]*>([^<]*)</p>", QRegularExpression::DotMatchesEverythingOption);
+    QList<NewsItem> items;
+    for (auto it = post.globalMatch(html); it.hasNext();) {
+        const auto match = it.next();
+        NewsItem item; item.source = "CachyOS"; item.important = true;
+        item.date = QLocale::c().toDateTime(match.captured(1).trimmed(), "MMM d, yyyy");
+        item.url = "https://cachyos.org" + match.captured(2); item.title = plainDescription(match.captured(3)).simplified(); item.summary = plainDescription(match.captured(4)).simplified();
+        items.append(item);
+    }
+    return items;
+}
+
+QList<Orphan> parseOrphans(const QString &text) {
+    QList<Orphan> result;
+    for (const QString &line : text.split('\n', Qt::SkipEmptyParts)) {
+        const auto fields = line.trimmed().split('\t');
+        if (validPackageName(fields[0])) result.append({fields[0], fields.value(1).trimmed()});
+    }
+    return result;
+}
+
+void Backend::orphans(std::function<void(QList<Orphan>)> done) {
+    // pacman -Qdtq: dependencies nothing requires or optionally requires. expac adds the size when it is installed.
+    readCommand("bash", {"-c", "pacman -Qdtq | while read -r n; do printf '%s\\t%s\\n' \"$n\" \"$(expac -H M '%m' \"$n\" 2>/dev/null)\"; done"},
+                [done](int, QString output, QString) { done(parseOrphans(output)); });
 }
 
 bool validPackageName(const QString &name) {
@@ -103,6 +232,49 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
         return fail("Cannot save the launcher. The imported copy was removed.");
     }
     if (error) error->clear();
+    return dest;
+}
+
+QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames) {
+    QStringList names; QString script = "fail=0\nexe=\"$1\"; shift\n";
+    auto section = [&](const QString &name) { names << name; script += "echo '==> " + name + "'\n"; };
+    if (system) {
+        section("System packages");
+        script += "pkexec pacman -Syu --noconfirm || { echo '==> The system upgrade failed, so nothing else was updated.'; exit 1; }\n";
+    }
+    if (aur) {
+        section("AUR packages");
+        script += QString("if command -v paru >/dev/null; then paru -Sua --noconfirm --skipreview%1 || { echo '==> The AUR update failed.'; fail=1; }; else echo 'paru is not installed.'; fail=1; fi\n").arg(devel ? " --devel" : "");
+    }
+    if (flatpak) {
+        section("Flatpak apps");
+        script += "flatpak update -y --noninteractive || { echo '==> The Flatpak update failed.'; fail=1; }\n";
+    }
+    if (appImages) {
+        section("AppImages");
+        // Each AppImage downloads under its old name, is imported as the new copy, and the old copy goes away.
+        script += "tmp=$(mktemp -d); trap 'rm -rf \"$tmp\"' EXIT\n"
+                  "for item in \"$@\"; do\n"
+                  "  IFS=$'\\t' read -r id url name <<<\"$item\"\n"
+                  "  echo \"Downloading $name\"; mkdir -p \"$tmp/$id\"; file=\"$tmp/$id/${name//\\//_}.AppImage\"\n"
+                  "  if curl -fsSL -o \"$file\" \"$url\" && \"$exe\" --import-appimage \"$file\" --replaces \"$id\"; then echo \"Updated $name\"; else echo \"Could not update $name\"; fail=1; fi\n"
+                  "done\n";
+    }
+    if (system) {
+        section("Orphan packages");  // Only reported: removing them is the user's call
+        script += "orphans=$(pacman -Qdtq 2>/dev/null); if [ -n \"$orphans\" ]; then echo 'Orphan packages (nothing needs them any more):'; echo \"$orphans\"; echo 'Remove them with: sudo pacman -Rns $(pacman -Qdtq)'; else echo 'No orphan packages.'; fi\n";
+    }
+    script += "exit $fail\n";
+    if (stepNames) *stepNames = names;
+    return script;
+}
+
+QString replaceAppImage(const QString &file, const QString &oldId, const QString &dataRoot, QString *error) {
+    if (!QRegularExpression("^[0-9a-f]{64}$").match(oldId).hasMatch()) { if (error) *error = "This is not an imported AppImage."; return {}; }
+    const QString dest = importAppImage(file, dataRoot, error);
+    if (dest.isEmpty()) return {};
+    QFile::remove(dataRoot + "/WoofStore/appimages/" + oldId + ".AppImage");
+    QFile::remove(dataRoot + "/applications/woof-store-" + oldId + ".desktop");
     return dest;
 }
 
@@ -608,7 +780,7 @@ QList<UpdateEntry> parseArchUpdates(const QString &text, const QString &source) 
     QList<UpdateEntry> result;
     for (const QString &row : text.split('\n', Qt::SkipEmptyParts)) {
         const auto match = line.match(row.trimmed());
-        if (match.hasMatch()) result.append({match.captured(1), match.captured(1), match.captured(2), match.captured(3), source});
+        if (match.hasMatch()) result.append({match.captured(1), match.captured(1), match.captured(2), match.captured(3), source, {}});
     }
     return result;
 }
@@ -619,7 +791,9 @@ QList<UpdateEntry> parseFlatpakUpdates(const QString &text, const QHash<QString,
         const auto f = row.split('\t');
         if (f.size() < 3 || f[0].isEmpty() || seen.contains(f[0])) continue;
         seen.insert(f[0]);
-        result.append({f[0], f[1].isEmpty() ? f[0] : f[1], installedVersions.value(f[0]), f[2], "Flatpak"});
+        // Runtimes (GNOME Platform, KDE Platform…) have no version of their own: the branch tells which one.
+        const QString to = !f[2].isEmpty() ? f[2] : f.value(3);
+        result.append({f[0], f[1].isEmpty() ? f[0] : f[1], installedVersions.value(f[0]), to.isEmpty() ? "newer" : to, "Flatpak", {}});
     }
     return result;
 }
@@ -633,7 +807,7 @@ void Backend::refresh() {
 void Backend::checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> done) {
     auto found = std::make_shared<QList<UpdateEntry>>();
     auto problems = std::make_shared<QStringList>();
-    auto pending = std::make_shared<int>(3);
+    auto pending = std::make_shared<int>(4);
     auto finish = [found, problems, pending, done] { if (--*pending == 0) done(*found, *problems); };
     QHash<QString, QString> versions; for (const auto &app : installed) if (app.source == "Flatpak") versions.insert(app.id, app.version);
     // Exit codes: checkupdates 2 and paru 1 mean "nothing to update"; a missing tool is skipped.
@@ -642,15 +816,108 @@ void Backend::checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> 
         else if (code != 2 && code != -1) problems->append("Arch packages: " + error.trimmed());
         finish();
     }, 120000);
+    checkAppImages([found, problems, finish](QList<UpdateEntry> entries, QStringList errors) { *found += entries; *problems += errors; finish(); });
     readCommand("paru", {"-Qua"}, [found, finish](int code, QString output, QString) {
         if (code == 0) *found += parseArchUpdates(output, "AUR");
         finish();
     }, 120000);
-    readCommand("flatpak", {"remote-ls", "--updates", "--app", "--columns=application,name,version"}, [found, problems, finish, versions](int code, QString output, QString error) {
+    readCommand("flatpak", {"remote-ls", "--updates", "--columns=application,name,version,branch"}, [found, problems, finish, versions](int code, QString output, QString error) {
         if (code == 0) *found += parseFlatpakUpdates(output, versions);
         else if (code != -1) problems->append("Flatpak: " + error.trimmed());
         finish();
     }, 120000);
+}
+
+void Backend::fetch(const QUrl &url, std::function<void(QByteArray, QString)> done, qint64 firstBytes) {
+    QNetworkRequest request(url);
+    request.setTransferTimeout(20000);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);  // Feeds move: follow http(s) redirects
+    request.setRawHeader("User-Agent", "WoofStore");
+    request.setRawHeader("Accept", "application/vnd.github+json, application/xml, text/html, */*");
+    auto *reply = network.get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, done, firstBytes] {
+        reply->deleteLater();
+        QByteArray data = reply->readAll();
+        if (firstBytes > 0) data = data.left(firstBytes);
+        done(data, reply->error() == QNetworkReply::NoError ? QString() : reply->errorString());
+    });
+}
+
+// AppImages that publish update information are compared by checksum with the newest file the publisher lists.
+void Backend::checkAppImages(std::function<void(QList<UpdateEntry>, QStringList)> done) {
+    auto found = std::make_shared<QList<UpdateEntry>>();
+    auto problems = std::make_shared<QStringList>();
+    Apps images; for (const auto &app : installed) if (app.source == "AppImage" && !app.path.isEmpty()) images.append(app);
+    if (images.isEmpty() || fixtureMode) { done({}, {}); return; }
+    auto pending = std::make_shared<int>(images.size());
+    auto finish = [found, problems, pending, done] { if (--*pending == 0) done(*found, *problems); };
+    for (const App &app : images) {
+        struct Local { QString info, sha1; };
+        auto *watcher = new QFutureWatcher<Local>(this);
+        connect(watcher, &QFutureWatcher<Local>::finished, this, [=] {
+            const Local local = watcher->result(); watcher->deleteLater();
+            const auto info = parseUpdateInfo(local.info);
+            if (!info) { finish(); return; }  // No update information: nothing to compare
+            auto compare = [=](QString zsyncUrl, QString downloadUrl, QString version) {
+                fetch(QUrl(zsyncUrl), [=](QByteArray header, QString error) {
+                    const QString newest = zsyncSha1(header);
+                    if (newest.isEmpty()) problems->append(app.name + ": " + (error.isEmpty() ? "no checksum in the update file" : error));
+                    else if (newest != local.sha1) found->append({app.id, app.name, {}, version.isEmpty() ? "newer" : version, "AppImage", downloadUrl});
+                    finish();
+                }, 4096);
+            };
+            if (!info->zsyncUrl.isEmpty()) {
+                QString download = info->zsyncUrl; download.chop(6);  // name.AppImage.zsync -> name.AppImage
+                compare(info->zsyncUrl, download, {});
+                return;
+            }
+            const QString release = info->tag == "latest" ? "latest" : "tags/" + info->tag;
+            fetch(QUrl(QString("https://api.github.com/repos/%1/%2/releases/%3").arg(info->owner, info->repo, release)), [=](QByteArray json, QString error) {
+                const ReleaseAsset asset = pickReleaseAsset(json, info->pattern);
+                if (asset.url.isEmpty()) { problems->append(app.name + ": " + (error.isEmpty() ? "no matching release file" : error)); finish(); return; }
+                compare(asset.zsyncUrl, asset.url, asset.version);
+            });
+        });
+        const QString path = app.path;
+        watcher->setFuture(QtConcurrent::run([path] {
+            Local local; local.info = appImageUpdateInfo(path);
+            if (local.info.isEmpty()) return local;
+            QFile file(path); QCryptographicHash hash(QCryptographicHash::Sha1);
+            if (file.open(QIODevice::ReadOnly) && hash.addData(&file)) local.sha1 = QString::fromLatin1(hash.result().toHex());
+            return local;
+        }));
+    }
+}
+
+void Backend::loadNews(std::function<void(QList<NewsItem>, QStringList)> done) {
+    struct Source { QString name, url; bool important, html; };
+    const QList<Source> sources = {
+        {"Arch Linux", "https://archlinux.org/feeds/news/", true, false},
+        {"CachyOS", "https://cachyos.org/blog/", true, true},
+        {"Linux kernel", "https://www.kernel.org/feeds/kdist.xml", false, false},
+        {"KDE", "https://kde.org/announcements/index.xml", false, false},
+        {"LWN.net", "https://lwn.net/headlines/rss", false, false},
+        {"9to5Linux", "https://9to5linux.com/feed", false, false},
+        {"Phoronix", "https://www.phoronix.com/rss.php", false, false},
+        {"GamingOnLinux", "https://www.gamingonlinux.com/article_rss.php", false, false},
+        {"OMG! Ubuntu", "https://www.omgubuntu.co.uk/feed", false, false},
+        {"Fedora Magazine", "https://fedoramagazine.org/feed/", false, false},
+        {"Linuxiac", "https://linuxiac.com/feed/", false, false},
+        {"It's FOSS", "https://itsfoss.com/news/rss/", false, false},
+    };
+    auto items = std::make_shared<QList<NewsItem>>();
+    auto problems = std::make_shared<QStringList>();
+    auto pending = std::make_shared<int>(sources.size());
+    for (const Source &source : sources) {
+        fetch(QUrl(source.url), [=](QByteArray data, QString error) {
+            const auto parsed = source.html ? parseCachyBlog(QString::fromUtf8(data)) : parseFeed(data, source.name, source.important);
+            if (parsed.isEmpty()) problems->append(source.name + (error.isEmpty() ? ": nothing found" : ": " + error));
+            *items += parsed.mid(0, 12);
+            if (--*pending > 0) return;
+            std::stable_sort(items->begin(), items->end(), [](const NewsItem &a, const NewsItem &b) { return a.date > b.date; });
+            done(*items, *problems);
+        });
+    }
 }
 
 void Backend::searchAur(const QString &query, std::function<void(Apps, QString)> done) {

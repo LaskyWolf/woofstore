@@ -6,7 +6,9 @@
 #include <QTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QRegularExpression>
+#include <QTemporaryDir>
 #include "backend.h"
 #include "catalog.h"
 #include "merge.h"
@@ -264,7 +266,7 @@ int main(int argc, char **argv) {
     assert(!parseLauncher("/x/s.desktop", "[Desktop Entry]\nType=Application\nName=Game\nExec=steam steam://rungameid/1", "en_US")); // Steam game
     const auto updates = parseArchUpdates("systemd  262-1 -> 262.1-1\nnoise line\nlinux  7.2.9-2  ->  7.2.11-1\n", "Arch");
     assert(updates.size() == 2 && updates[0].name == "systemd" && updates[1].to == "7.2.11-1" && updates[1].source == "Arch");
-    const auto flatpakUpdates = parseFlatpakUpdates("org.a.B\tB\t2.0\norg.a.B\tB\t2.0\norg.c.D\tD\t1.1\n", {{"org.a.B", "1.0"}});
+    const auto flatpakUpdates = parseFlatpakUpdates("org.a.B\tB\t2.0\t\norg.a.B\tB\t2.0\t\norg.c.D\tD\t1.1\t\n", {{"org.a.B", "1.0"}});
     assert(flatpakUpdates.size() == 2 && flatpakUpdates[0].from == "1.0" && flatpakUpdates[1].from.isEmpty());
     auto plain = [](const QString &html) { QString text = html; return text.remove(QRegularExpression("<[^>]*>")); };
     const auto kernel = versionDiff("7.2.9-2", "7.2.11-1");
@@ -275,5 +277,69 @@ int main(int argc, char **argv) {
     assert(versionDiff("262.1", "262.1.1").first == "262.1" && versionDiff("262.1", "262.1.1").second.contains(">.1<"));
     assert(plain(versionDiff("2.5.2-1.1", "2.5.3-1.1").second) == "2.5.3-1.1" && versionDiff("2.5.2-1.1", "2.5.3-1.1").second.contains(">3-1.1<"));
     assert(versionDiff("2.0", "2.0").first == "2.0");
+    // AppImage update information
+    QByteArray elf(64, '\0'); elf.replace(0, 4, QByteArray("\x7f" "ELF", 4)); elf[4] = 2; elf[5] = 1;
+    const QByteArray updInfo = QByteArray("gh-releases-zsync|owner|repo|latest|Foo-*-x86_64.AppImage.zsync") + QByteArray(1, '\0') + QByteArray(20, '\xff');
+    const QByteArray names = QByteArray("\0.shstrtab\0.upd_info\0", 21);
+    auto put = [](QByteArray &bytes, int at, quint64 value, int size) { for (int i = 0; i < size; ++i) bytes[at + i] = char((value >> (8 * i)) & 0xff); };
+    const int infoAt = 64, namesAt = infoAt + int(updInfo.size()), tableAt = namesAt + int(names.size());
+    QByteArray table(64 * 3, '\0');  // null section, .shstrtab, .upd_info
+    put(table, 64 + 0, 1, 4); put(table, 64 + 0x18, namesAt, 8); put(table, 64 + 0x20, names.size(), 8);
+    put(table, 128 + 0, 11, 4); put(table, 128 + 0x18, infoAt, 8); put(table, 128 + 0x20, updInfo.size(), 8);
+    put(elf, 0x28, tableAt, 8); put(elf, 0x3A, 64, 2); put(elf, 0x3C, 3, 2); put(elf, 0x3E, 1, 2);
+    QTemporaryDir scratch;
+    const QString imagePath = scratch.path() + "/Foo.AppImage";
+    { QFile image(imagePath); assert(image.open(QIODevice::WriteOnly)); image.write(elf + updInfo + names + table); }
+    assert(appImageUpdateInfo(imagePath) == "gh-releases-zsync|owner|repo|latest|Foo-*-x86_64.AppImage.zsync");
+    assert(appImageUpdateInfo("/nonexistent").isEmpty());
+    const auto updateInfo = parseUpdateInfo(appImageUpdateInfo(imagePath));
+    assert(updateInfo && updateInfo->owner == "owner" && updateInfo->tag == "latest" && !parseUpdateInfo("gh-releases-direct|a|b|latest|x"));
+    assert(parseUpdateInfo("zsync|https://example.org/Foo.AppImage.zsync")->zsyncUrl.endsWith(".zsync") && !parseUpdateInfo("zsync|file:///etc/passwd"));
+    assert(zsyncSha1("zsync: 0.6.2\nFilename: Foo\nSHA-1: 0123456789ABCDEF0123456789abcdef01234567\n\n") == "0123456789abcdef0123456789abcdef01234567" && zsyncSha1("nothing").isEmpty());
+    const auto asset = pickReleaseAsset(R"({"tag_name":"v2.0","assets":[{"name":"Foo-2.0-x86_64.AppImage","browser_download_url":"https://x/Foo-2.0-x86_64.AppImage"},{"name":"Foo-2.0-x86_64.AppImage.zsync","browser_download_url":"https://x/Foo-2.0-x86_64.AppImage.zsync"},{"name":"Other.AppImage","browser_download_url":"https://x/o"}]})", updateInfo->pattern);
+    assert(asset.url == "https://x/Foo-2.0-x86_64.AppImage" && asset.zsyncUrl.endsWith(".zsync") && asset.version == "v2.0");
+    assert(pickReleaseAsset("{}", "*").url.isEmpty());
+    // News
+    const auto feed = parseFeed("<rss><channel><item><title>Manual intervention needed</title><link>https://archlinux.org/news/x/</link><pubDate>Mon, 13 Oct 2025 12:00:00 +0000</pubDate><description>&lt;p&gt;Do this &lt;b&gt;first&lt;/b&gt;.&lt;/p&gt;</description></item><item><title>No link</title></item></channel></rss>", "Arch Linux", true);
+    assert(feed.size() == 1 && feed[0].summary == "Do this first." && feed[0].important && feed[0].date.date() == QDate(2025, 10, 13) && feed[0].source == "Arch Linux");
+    const auto blog = parseCachyBlog("<li><article><time datetime=\"2026-08-09\">Aug 9, 2026</time> · <a href=\"/category/release\">release</a><h2 class=\"x\"><a class=\"y\" href=\"/blog/2608-august-release\">CachyOS August 2026 Release</a></h2><p class=\"z\">Shelly Rewrite</p></article></li>");
+    assert(blog.size() == 1 && blog[0].url == "https://cachyos.org/blog/2608-august-release" && blog[0].date.date() == QDate(2026, 8, 9) && blog[0].summary == "Shelly Rewrite");
+    // The update script, run with stand-ins for pacman, paru, flatpak, curl and this program
+    {
+        QTemporaryDir bin; const QString log = bin.path() + "/log";
+        auto stub = [&](const QString &name, const QString &body) { QFile f(bin.path() + "/" + name); assert(f.open(QIODevice::WriteOnly)); f.write("#!/bin/sh\n" + body.toUtf8()); f.close(); f.setPermissions(QFile::permissions(f.fileName()) | QFile::ExeOwner); };
+        auto run = [&](const QString &script, const QStringList &args) {
+            QFile::remove(log);
+            QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env);
+            p.start("bash", QStringList{"-c", script, "x", bin.path() + "/woof"} + args); p.waitForFinished(20000);
+            QFile f(log); const QString calls = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+            return QPair<int, QString>(p.exitCode(), calls);
+        };
+        stub("pkexec", "echo \"pkexec $*\" >> \"$LOG\"; exit ${FAIL_PACMAN:-0}\n");
+        stub("paru", "echo \"paru $*\" >> \"$LOG\"; exit ${FAIL_PARU:-0}\n");
+        stub("flatpak", "echo \"flatpak $*\" >> \"$LOG\"\n");
+        stub("curl", "echo \"curl $*\" >> \"$LOG\"; for last; do :; done; : > \"$3\"\n");
+        stub("woof", "echo \"woof $*\" >> \"$LOG\"\n");
+        QStringList names;
+        const QString full = updateScript(true, true, true, true, true, &names);
+        assert(names == QStringList({"System packages", "AUR packages", "Flatpak apps", "AppImages", "Orphan packages"}));
+        const QString image = "abc\thttps://x/Foo.AppImage\tFoo/Bar";
+        auto ok = run(full, {image});
+        assert(ok.first == 0 && ok.second.indexOf("pkexec pacman -Syu --noconfirm") < ok.second.indexOf("paru -Sua --noconfirm --skipreview --devel")
+               && ok.second.indexOf("paru") < ok.second.indexOf("flatpak update -y --noninteractive") && ok.second.contains("curl -fsSL -o") && ok.second.contains("woof --import-appimage") && ok.second.contains("--replaces abc") && ok.second.contains("Foo_Bar.AppImage"));
+        qputenv("FAIL_PACMAN", "1");
+        auto stopped = run(full, {image});
+        assert(stopped.first == 1 && stopped.second == "pkexec pacman -Syu --noconfirm\n");  // Nothing after a failed system upgrade
+        qunsetenv("FAIL_PACMAN"); qputenv("FAIL_PARU", "1");
+        auto partial = run(full, {image});
+        assert(partial.first == 1 && partial.second.contains("flatpak update") && partial.second.contains("woof --import-appimage"));  // The rest still runs, the result reports the failure
+        qunsetenv("FAIL_PARU");
+        const QString onlyApps = updateScript(false, false, false, true, false, &names);
+        assert(names == QStringList({"Flatpak apps"}) && !onlyApps.contains("pacman") && !onlyApps.contains("paru") && run(onlyApps, {}).second == "flatpak update -y --noninteractive\n");
+    }
+    {
+        const auto orphans = parseOrphans("libfoo\t1.2 MiB\nbar-git\n\n$(rm -rf x)\t3 MiB\n");
+        assert(orphans.size() == 2 && orphans[0].name == "libfoo" && orphans[0].size == "1.2 MiB" && orphans[1].name == "bar-git" && orphans[1].size.isEmpty());
+    }
     std::puts("Installed and updates checks: PASS");
 }
