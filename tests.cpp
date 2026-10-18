@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
     parseOdrs(R"({"star0":0,"star1":0,"star2":0,"star3":0,"star4":5,"star5":5,"total":10})", &rated);
     assert(rated.reviews == 10 && qAbs(rated.stars - 4.5) < 0.001);
     Ratings few; parseOdrs(R"({"star5":2,"total":2})", &few); assert(few.reviews == 0 && !few.any());  // Too few reviews: no stars
-    parseFlathubStats(R"({"installs_total":1781622,"installs_last_month":35610})", &few); assert(few.installs == 1781622 && few.any());
+    parseFlathubStats(R"({"installs_total":1781622,"installs_last_month":35610,"installs_per_day":{"2026-07-02":5,"2026-07-01":3}})", &few); assert(few.installs == 1781622 && few.any() && few.daily.size() == 2 && few.daily[0].first == "2026-07-01");
     const Rankings recent = parseRankings({}, {}, {}, R"({"hits":[{"app_id":"a.b.New"}]})", R"({"hits":[{"app_id":"a.b.Fresh"},{"app_id":"c.d.Fresh"}]})");
     assert(recent.added == QStringList{"a.b.New"} && recent.updated.size() == 2);
     std::puts("Ratings checks: PASS");

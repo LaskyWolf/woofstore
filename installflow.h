@@ -5,11 +5,14 @@
 #include <QDir>
 #include <QFontDatabase>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QProcess>
 #include <QPushButton>
 #include <QTemporaryFile>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 #include <functional>
 
@@ -118,39 +121,91 @@ public:
 #include <QProgressBar>
 #include <QToolButton>
 // Progress of a package operation without a terminal: steps, one status line, and the raw output on request.
+// Steps as nodes on one line. The line fills as the job moves from the first step to the last.
+class StepTrack : public QWidget {
+public:
+    QStringList names; int step = 0; double fraction = 0; bool failed = false;
+    explicit StepTrack(const QStringList &labels, QWidget *parent = nullptr) : QWidget(parent), names(labels) {
+        setFixedHeight(68);
+        fill.setDuration(450); fill.setEasingCurve(QEasingCurve::OutCubic);
+        connect(&fill, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) { shown = v.toDouble(); update(); });
+        pulse.setStartValue(0.0); pulse.setEndValue(1.0); pulse.setDuration(1300); pulse.setLoopCount(-1);
+        connect(&pulse, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) { glow = v.toDouble(); update(); });
+        pulse.start();
+    }
+    // Steps already done count 1 each; the active step adds its own progress, or a little while its progress is unknown.
+    double position() const {
+        const double last = names.size() - 1;
+        return step >= names.size() ? last : qMin(last - 0.08, step + (fraction > 0 ? fraction * 0.9 : 0.35));  // Only a finished job reaches the last node
+    }
+    void setStep(int index) { step = index; fraction = 0; retarget(); }
+    void setFraction(double value) { fraction = value; retarget(); }
+    void finish(bool ok) { failed = !ok; if (ok) { step = names.size(); fraction = 0; } pulse.stop(); glow = 0; fill.stop(); shown = position(); update(); }  // No animation: the window is often busy right after the job ends
+    bool filled() const { return step >= names.size(); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const int n = names.size(); if (n < 2) return;
+        const double margin = 56, y = 22, radius = 11, span = (width() - 2 * margin) / (n - 1);
+        const QColor accent = palette().highlight().color(), idle = palette().mid().color(), danger("#da4453");
+        const QColor track = palette().color(QPalette::Base);
+        auto x = [&](int i) { return margin + i * span; };
+        p.setPen(Qt::NoPen);
+        p.setBrush(track); p.drawRoundedRect(QRectF(x(0), y - 2.5, span * (n - 1), 5), 2.5, 2.5);
+        p.setBrush(failed ? danger : accent); p.drawRoundedRect(QRectF(x(0), y - 2.5, span * qBound(0., shown, double(n - 1)), 5), 2.5, 2.5);
+        for (int i = 0; i < n; ++i) {
+            const bool done = i < step, active = i == step && !filled();
+            const QPointF c(x(i), y);
+            if (active && !failed) { p.setPen(Qt::NoPen); QColor halo = accent; halo.setAlphaF(0.35 * (1 - glow)); p.setBrush(halo); p.drawEllipse(c, radius + 10 * glow, radius + 10 * glow); }
+            p.setBrush(done || filled() ? accent : active ? (failed ? danger : accent) : palette().window().color());
+            p.setPen(QPen(done || active || filled() ? Qt::transparent : idle, 2)); p.drawEllipse(c, radius, radius);
+            QPen mark(Qt::white, 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin); p.setPen(mark); p.setBrush(Qt::NoBrush);
+            if (done || filled()) { QPainterPath tick; tick.moveTo(c.x() - 4.5, c.y()); tick.lineTo(c.x() - 1, c.y() + 3.5); tick.lineTo(c.x() + 5, c.y() - 3.5); p.drawPath(tick); }
+            else if (active && failed) { p.drawLine(c + QPointF(-3.5, -3.5), c + QPointF(3.5, 3.5)); p.drawLine(c + QPointF(-3.5, 3.5), c + QPointF(3.5, -3.5)); }
+            else if (active) { p.setPen(Qt::NoPen); p.setBrush(Qt::white); p.drawEllipse(c, 3.5, 3.5); }
+            QFont font = this->font(); font.setBold(active); p.setFont(font);
+            p.setPen(active || done || filled() ? palette().text().color() : palette().placeholderText().color());
+            p.drawText(QRectF(c.x() - span / 2 - 8, y + radius + 8, span + 16, 24), Qt::AlignHCenter | Qt::AlignTop, names[i]);
+        }
+    }
+private:
+    QVariantAnimation fill, pulse; double shown = 0, glow = 0;
+    void retarget() {
+        const double target = position();
+        if (qFuzzyCompare(target + 1, shown + 1)) { update(); return; }
+        fill.stop(); fill.setStartValue(shown); fill.setEndValue(target);
+        if (isVisible()) fill.start(); else { shown = target; update(); }
+    }
+};
+
 class JobDialog : public QDialog {
 public:
-    QLabel *steps = nullptr, *phase = nullptr;
-    QProgressBar *bar = nullptr;
+    QLabel *phase = nullptr;
+    StepTrack *track = nullptr;
     QPlainTextEdit *log = nullptr;
     QPushButton *close = nullptr;
     QToolButton *details = nullptr;
     QStringList stepNames; int step = 0;
 
-    explicit JobDialog(const QString &title, const QStringList &names = {}, QWidget *parent = nullptr) : QDialog(parent), stepNames(names) {
+    explicit JobDialog(const QString &title, const QStringList &names = {}, QWidget *parent = nullptr) : QDialog(parent), stepNames(names.isEmpty() ? QStringList{"Prepare", "Install"} : names) {
         setObjectName("jobDialog"); setWindowTitle(title); setMinimumWidth(560);
         auto *layout = new QVBoxLayout(this); layout->setSpacing(12);
         auto *heading = new QLabel(title); QFont font = heading->font(); font.setPointSize(font.pointSize() + 4); font.setBold(true); heading->setFont(font);
-        steps = new QLabel; steps->setTextFormat(Qt::RichText); steps->setVisible(!names.isEmpty());
-        bar = new QProgressBar; bar->setRange(0, 0); bar->setTextVisible(false); bar->setFixedHeight(8);
-        phase = new QLabel("Starting…"); phase->setWordWrap(true); phase->setTextFormat(Qt::PlainText);
+        track = new StepTrack(stepNames);
+        phase = new QLabel("Starting…"); phase->setWordWrap(true); phase->setTextFormat(Qt::PlainText); phase->setAlignment(Qt::AlignHCenter);
+        phase->setForegroundRole(QPalette::PlaceholderText);
         details = new QToolButton; details->setText("Show details"); details->setCheckable(true); details->setAutoRaise(true); details->setArrowType(Qt::RightArrow); details->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         log = new QPlainTextEdit; log->setReadOnly(true); log->setMaximumBlockCount(5000); log->setMinimumHeight(220); log->hide();
         log->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); log->setLineWrapMode(QPlainTextEdit::NoWrap);
         close = new QPushButton("Hide"); close->setToolTip("The operation keeps running; progress stays in Activity");
         auto *buttons = new QHBoxLayout; buttons->addWidget(details); buttons->addStretch(); buttons->addWidget(close);
-        for (QWidget *w : {static_cast<QWidget *>(heading), static_cast<QWidget *>(steps), static_cast<QWidget *>(bar), static_cast<QWidget *>(phase)}) layout->addWidget(w);
+        for (QWidget *w : {static_cast<QWidget *>(heading), static_cast<QWidget *>(track), static_cast<QWidget *>(phase)}) layout->addWidget(w);
         layout->addWidget(log, 1); layout->addLayout(buttons);
         connect(details, &QToolButton::toggled, this, [this](bool open) { log->setVisible(open); details->setText(open ? "Hide details" : "Show details"); details->setArrowType(open ? Qt::DownArrow : Qt::RightArrow); adjustSize(); });
         connect(close, &QPushButton::clicked, this, &QDialog::hide);
         showStep(0);
     }
-    void showStep(int index) {
-        step = qBound(0, index, int(stepNames.size()));
-        QStringList parts;
-        for (int i = 0; i < stepNames.size(); ++i) parts << (i < step ? "✓ " : i == step ? "● " : "○ ") + stepNames[i];
-        steps->setText(parts.join("&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;"));
-    }
+    void showStep(int index) { step = qBound(0, index, int(stepNames.size())); track->setStep(step); }
     void advanceTo(int index) { if (index > step) showStep(index); }
     // Output arrives in chunks; keep colors and progress-bar redraws out of the log.
     void feed(const QString &chunk) {
@@ -159,14 +214,13 @@ public:
             line = line.trimmed(); if (line.isEmpty()) continue;
             log->appendPlainText(line);
             const auto percent = QRegularExpression("(\\d{1,3})%").match(line);
-            if (percent.hasMatch() && percent.captured(1).toInt() <= 100) { bar->setRange(0, 100); bar->setValue(percent.captured(1).toInt()); }
-            else if (bar->maximum() != 0 && !line.contains('%')) { /* keep the last percentage */ }
+            if (percent.hasMatch() && percent.captured(1).toInt() <= 100) track->setFraction(percent.captured(1).toInt() / 100.0);
             phase->setText(line.startsWith("==>") ? line.mid(3).trimmed() : line.startsWith("->") ? line.mid(2).trimmed() : line);
         }
     }
     void finish(bool ok, const QString &message) {
-        bar->setRange(0, 100); bar->setValue(ok ? 100 : 0);
-        if (ok) showStep(stepNames.size());
+        if (ok) step = stepNames.size();
+        track->finish(ok);
         phase->setText(message); close->setText("Close"); close->setToolTip({});
         if (!ok) details->setChecked(true);
     }

@@ -96,6 +96,51 @@ protected:
     }
 };
 
+// Big numbers with a caption, and a daily-installs curve you can hover.
+class Sparkline : public QWidget {
+public:
+    explicit Sparkline(const QList<QPair<QString, int>> &values, QWidget *parent = nullptr) : QWidget(parent), data(values) {
+        setObjectName("installsChart"); setMouseTracking(true); setFixedHeight(96); setMinimumWidth(240);
+        setAccessibleName(QString("Installs per day over the last %1 days").arg(values.size()));
+        const int duration = desktopAnimationDuration(600);
+        grow.setDuration(duration); grow.setStartValue(duration ? 0. : 1.); grow.setEndValue(1.); grow.setEasingCurve(QEasingCurve::OutCubic);
+        connect(&grow, &QVariantAnimation::valueChanged, this, [this] { update(); });
+        if (duration) grow.start();
+    }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        if (data.size() < 2) return;
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        const QColor accent = palette().color(QPalette::Highlight);
+        int most = 1; for (const auto &d : data) most = qMax(most, d.second);
+        const QRectF area = QRectF(rect()).adjusted(2, 8, -2, -4);
+        auto point = [&](int i) { return QPointF(area.left() + area.width() * i / (data.size() - 1), area.bottom() - area.height() * data[i].second / most * grow.currentValue().toDouble()); };
+        QPainterPath line; line.moveTo(point(0));
+        for (int i = 1; i < data.size(); ++i) { const QPointF a = point(i - 1), b = point(i), mid((a.x() + b.x()) / 2, 0); line.cubicTo(QPointF(mid.x(), a.y()), QPointF(mid.x(), b.y()), b); }
+        QPainterPath fill = line; fill.lineTo(area.right(), area.bottom()); fill.lineTo(area.left(), area.bottom()); fill.closeSubpath();
+        QLinearGradient shade(0, area.top(), 0, area.bottom()); QColor top = accent; top.setAlpha(110); QColor bottom = accent; bottom.setAlpha(8);
+        shade.setColorAt(0, top); shade.setColorAt(1, bottom); p.fillPath(fill, shade);
+        p.setPen(QPen(accent, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); p.setBrush(Qt::NoBrush); p.drawPath(line);
+        if (hovered >= 0) {
+            const QPointF at = point(hovered);
+            QColor guide = palette().color(QPalette::WindowText); guide.setAlpha(60); p.setPen(guide); p.drawLine(QPointF(at.x(), area.top()), QPointF(at.x(), area.bottom()));
+            p.setPen(QPen(palette().color(QPalette::Window), 2)); p.setBrush(accent); p.drawEllipse(at, 5, 5);
+        }
+    }
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if (data.size() < 2) return;
+        const QRectF area = QRectF(rect()).adjusted(2, 8, -2, -4);
+        const int index = qBound(0, qRound((event->position().x() - area.left()) / area.width() * (data.size() - 1)), int(data.size()) - 1);
+        if (index != hovered) { hovered = index; update(); }
+        setToolTip(QString("%1 · %2 installs").arg(QLocale().toString(QDate::fromString(data[index].first, Qt::ISODate), QLocale::ShortFormat), QLocale().toString(data[index].second)));
+    }
+    void leaveEvent(QEvent *) override { hovered = -1; update(); }
+private:
+    QList<QPair<QString, int>> data;
+    QVariantAnimation grow;
+    int hovered = -1;
+};
+
 // Average, and how many reviews gave each star count. Hover a row to read its numbers; bars grow in once.
 class RatingBars : public QWidget {
 public:
@@ -429,19 +474,34 @@ private:
     QVBoxLayout *ratingsLayout = nullptr;
     // Each row names its source. Stars come only from ODRS reviews; other sources show their own numbers.
     void showRatings(const Ratings &ratings) {
-        while (auto *item = ratingsLayout->takeAt(0)) { delete item->widget(); delete item; }
-        QStringList lines;
-        bool hasBars = false;
-        if (ratings.reviews > 0) {
-            hasBars = true;
-        }
-        if (ratings.installs >= 0) lines << QString("%1 installs on Flathub · %2 last month").arg(QLocale().toString(ratings.installs), QLocale().toString(ratings.installsMonth));
-        if (ratings.repoPercent >= 0) lines << QString("Installed on %1 % of Arch systems that share statistics (pkgstats)").arg(ratings.repoPercent, 0, 'f', 1);
-        if (ratings.aurVotes >= 0) lines << QString("%1 votes on the AUR · popularity %2").arg(ratings.aurVotes).arg(ratings.aurPopularity, 0, 'f', 2);
-        if (lines.isEmpty() && !hasBars) { ratingsPanel->hide(); return; }
-        ratingsLayout->addWidget(text("Ratings", 16, true));
+        clearLayout(ratingsLayout);
+        const bool hasBars = ratings.reviews > 0;
+        // One tile per number that exists: big value, small caption.
+        QList<QPair<QString, QString>> tiles;
+        auto compact = [](qint64 n) { return n >= 1000000 ? QString::number(n / 1e6, 'f', 1) + " M" : n >= 10000 ? QString::number(n / 1000.) .section('.', 0, 0) + " K" : QLocale().toString(n); };
+        if (ratings.installs >= 0) tiles << QPair<QString, QString>{compact(ratings.installs), "installs on Flathub"} << QPair<QString, QString>{compact(ratings.installsMonth), "in the last month"};
+        if (ratings.repoPercent >= 0) tiles << QPair<QString, QString>{QString::number(ratings.repoPercent, 'f', 1) + " %", "of Arch systems (pkgstats)"};
+        if (ratings.aurVotes >= 0) tiles << QPair<QString, QString>{QString::number(ratings.aurVotes), QString("AUR votes · popularity %1").arg(ratings.aurPopularity, 0, 'f', 2)};
+        if (tiles.isEmpty() && !hasBars) { ratingsPanel->hide(); return; }
+        ratingsLayout->addWidget(text(hasBars ? "Ratings" : "Popularity", 16, true));
         if (hasBars) { ratingsLayout->addWidget(new RatingBars(ratings)); ratingsLayout->addWidget(text("Reviews from GNOME ODRS", 9)); }
-        for (const auto &line : lines) ratingsLayout->addWidget(text(line));
+        if (!tiles.isEmpty()) {
+            if (hasBars) ratingsLayout->addSpacing(12);
+            auto *row = new QHBoxLayout; row->setSpacing(32);
+            for (const auto &tile : tiles) {
+                auto *column = new QVBoxLayout; column->setSpacing(0);
+                auto *number = text(tile.first, 24, true); number->setObjectName("statNumber");
+                auto *caption = text(tile.second, 9); caption->setObjectName("statCaption");
+                column->addWidget(number); column->addWidget(caption); row->addLayout(column);
+            }
+            row->addStretch();
+            if (ratings.daily.size() > 1) {
+                auto *chart = new QVBoxLayout; chart->setSpacing(2);
+                chart->addWidget(new Sparkline(ratings.daily)); chart->addWidget(text(QString("Installs per day, last %1 days").arg(ratings.daily.size()), 9));
+                row->addLayout(chart, 2);
+            }
+            ratingsLayout->addLayout(row);
+        }
         ratingsPanel->show();
     }
     QVariantAnimation descriptionMotion;
@@ -472,6 +532,13 @@ private:
     QWidget *permissionBody = nullptr;
     QVBoxLayout *permissionLayout = nullptr;
     QVBoxLayout *addonLayout = nullptr, *linksLayout = nullptr;
+    // Deletes the widgets of nested layouts too; takeAt alone would leave them painted in place.
+    static void clearLayout(QLayout *layout) {
+        while (auto *item = layout->takeAt(0)) {
+            if (auto *inner = item->layout()) clearLayout(inner);
+            delete item->widget(); delete item;
+        }
+    }
     static QLabel *text(const QString &value, int points = 0, bool bold = false) {
         auto *label = new QLabel(value); label->setTextFormat(Qt::PlainText); label->setWordWrap(true);
         QFont font = label->font(); if (points) font.setPointSize(points); font.setBold(bold); label->setFont(font); return label;

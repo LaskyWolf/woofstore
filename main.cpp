@@ -76,7 +76,7 @@ public:
         auto *side = new QVBoxLayout(sidebar);
         side->setContentsMargins(8, 16, 8, 8);
         side->setSpacing(16);
-        compactSidebar = new QAction(QIcon::fromTheme("sidebar-collapse-left"), "Compact sidebar", this);
+        compactSidebar = new QAction(lucideIcon("panel-close"), "Compact sidebar", this);
         compactSidebar->setObjectName("compactSidebar");
         compactSidebar->setCheckable(true);
         auto *sidebarToggle = new QToolButton;
@@ -84,7 +84,7 @@ public:
         sidebarToggle->setAutoRaise(true);
         sidebarToggle->setDefaultAction(compactSidebar);
         sidebarToggle->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        sidebarToggle->setFixedSize(40, 40);
+        sidebarToggle->setFixedSize(40, 40); sidebarToggle->setIconSize(QSize(22, 22));
         side->addWidget(sidebarToggle, 0, Qt::AlignLeft);
         const QString navigationStyle = "QToolButton {border: none; border-radius: 8px; padding: 10px; background: transparent;} QToolButton:hover {background: palette(button);} QToolButton:checked {background: palette(midlight);} QToolButton:focus {border: 1px solid palette(highlight);}";
         sidebarToggle->setStyleSheet(navigationStyle);
@@ -92,12 +92,9 @@ public:
         auto *navHost = new QWidget; navHost->setObjectName("navigation");
         auto *navLayout = new QVBoxLayout(navHost); navLayout->setContentsMargins(0, 0, 0, 0); navLayout->setSpacing(8);
         int id = 0;
-        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "compass"}, {"Installed", "view-list-details"}, {"Updates", "view-refresh"}}) {
-            auto *item = new QToolButton;
-            item->setObjectName("nav" + entry.first); item->setText(entry.first); item->setIcon(QIcon::fromTheme(entry.second));
-            item->setIconSize(QSize(20, 20)); item->setFixedHeight(40); item->setCheckable(true);
-            item->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            item->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); item->setStyleSheet(navigationStyle);
+        for (const auto &entry : QList<QPair<QString, QString>>{{"Explore", "compass"}, {"Installed", "list"}, {"Updates", "refresh"}}) {
+            auto *item = new NavButton(entry.first, entry.second);
+            item->setObjectName("nav" + entry.first);
             item->setAccessibleName(entry.first); item->setToolTip(entry.first);
             navigation->addButton(item, id++); navLayout->addWidget(item);
         }
@@ -114,13 +111,8 @@ public:
             else sidebar->setFixedWidth(target);
             sidebarDivider->setVisible(!compact);
             activityButton->compact = compact;
-            activityButton->setFixedHeight(compact ? sidebarToggle->height() : 48);
             activityButton->update();
-            for (auto *button : navigation->buttons()) {
-                auto *item = static_cast<QToolButton *>(button);
-                item->setToolButtonStyle(compact ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
-            }
-            compactSidebar->setIcon(QIcon::fromTheme(compact ? "sidebar-expand-left" : "sidebar-collapse-left"));
+            compactSidebar->setIcon(lucideIcon(compact ? "panel-open" : "panel-close"));
             sidebarToggle->setToolTip(compact ? "Expand sidebar" : "Collapse sidebar");
             sidebarToggle->setAccessibleName(sidebarToggle->toolTip());
             settings.setValue("compactSidebar", compact);
@@ -163,8 +155,8 @@ public:
         activityLayout->addLayout(activityActions);
         connect(clear, &QPushButton::clicked, this, [this] {
             for (auto &entry : previewOperations.activities) if (entry.progress == 100) entry.cleared = true;
-            if (busy() && !packageActivityHistory.isEmpty()) packageActivityHistory = {packageActivityHistory.last()};
-            else packageActivityHistory.clear();
+            if (busy() && !packageActivityHistory.isEmpty()) { packageActivityHistory = {packageActivityHistory.last()}; packageJobs = {packageJobs.last()}; }
+            else { packageActivityHistory.clear(); packageJobs.clear(); }
             refreshActivity();
         });
         connect(back, &QPushButton::clicked, activityDialog, &QDialog::hide);
@@ -193,6 +185,7 @@ public:
         connect(&backend, &Backend::issue, this, [this](const QString &message) {
             statusBar()->showMessage(message);
         });
+        statusBar()->hide();  // Messages stay readable for checks, but nothing is drawn at the bottom
         connect(&backend, &Backend::catalogReady, this, [this] {
             explore->notice->setText("Repository apps have no icons or descriptions yet. Install them with: sudo pacman -S --needed archlinux-appstream-data");
             explore->notice->setVisible(backend.osMetadataMissing);
@@ -238,7 +231,7 @@ public:
         if (list->count()) { list->setCurrentRow(0); list->setFocus(); }
     }
 
-    void showActivity() { activityDialog->show(); activityDialog->raise(); activityDialog->activateWindow(); }
+    void showActivity() { jobFailed = false; lastResult = 0; refreshActivity(); activityDialog->show(); activityDialog->raise(); activityDialog->activateWindow(); }
     void previewActivity() { previewOperations.start("sample", "Krita", "Install"); showActivity(); }
     void refreshActivity() {
         if (!activityHistory) return;
@@ -260,10 +253,15 @@ public:
                 auto *state = label(""); state->setObjectName("activityState");
                 auto *progress = new QProgressBar; progress->setObjectName("activityProgress"); progress->setTextVisible(false); progress->setFixedHeight(4);
                 layout->addWidget(name); layout->addWidget(state); layout->addWidget(progress); activityHistory->setItemWidget(item, row);
+                for (QWidget *part : {static_cast<QWidget *>(name), static_cast<QWidget *>(state), static_cast<QWidget *>(progress)}) part->setAttribute(Qt::WA_TransparentForMouseEvents);
+                row->installEventFilter(this);
             }
         }
         for (int i = 0; i < records.size(); ++i) {
             const auto &record = records[i]; auto *row = activityHistory->itemWidget(activityHistory->item(i));
+            const bool opens = i < packageJobs.size() && !packageJobs[i].title.isEmpty();
+            row->setProperty("jobIndex", opens ? i : -1);
+            row->setCursor(opens ? Qt::PointingHandCursor : Qt::ArrowCursor); row->setToolTip(opens ? "Show the details of this operation" : QString());
             row->findChild<QLabel *>("activityName")->setText(record.name);
             row->findChild<QLabel *>("activityState")->setText(record.state);
             auto *progress = row->findChild<QProgressBar *>("activityProgress");
@@ -277,6 +275,8 @@ public:
         clear->setEnabled(canClear); clear->setCursor(canClear ? Qt::PointingHandCursor : Qt::ArrowCursor);
         static_cast<QGraphicsOpacityEffect *>(clear->graphicsEffect())->setOpacity(canClear ? 1. : .4);
         if (!busy()) activityStatus->setText(previewOperations.running() ? "No package changes" : "Activity history");
+        activityButton->setResult(lastResult);
+        activityButton->attention = bool(part) || jobFailed;  // A terminal waiting for input, or a failure nobody has looked at activityButton->update();
         activityButton->busy = busy() || previewOperations.running(); activityButton->indeterminate = busy();
         activityButton->progress = previewOperations.activities.isEmpty() ? 0 : previewOperations.progress();
         activityButton->setToolTip(busy() ? "Package activity running · progress unavailable" : previewOperations.running() ? QString("Activity · %1%").arg(activityButton->progress) : "Show activity");
@@ -347,17 +347,15 @@ public:
         if (!terminal) { delete part; QMessageBox::critical(this, "Unsupported terminal component", "KonsolePart does not provide the required terminal interface."); return false; }
         terminalLayout->addWidget(part->widget());
         activityTitle->setText(title);
-        packageActivityHistory.append(title + " · Running · progress unavailable");
+        packageActivityHistory.append(title + " · Running · progress unavailable"); packageJobs.append(JobRecord{});
         activityStatus->setText("Answer questions directly below. Passwords are handled by the package manager. Keep this window open until the process finishes.");
         showActivity();
-        statusBar()->showMessage(title + " — running");
         refreshActivity();
         connect(part, &QObject::destroyed, this, [this] {
             part = nullptr;
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = activityTitle->text() + " · Ended · check command exit code";
             activityStatus->setText("Activity ended. Check the exit code in its output before retrying.");
             refreshActivity();
-            statusBar()->showMessage("Activity ended");
             settling = true;
             backend.loadInstalled();
         });
@@ -428,22 +426,34 @@ public:
         environment.insert("SUDO_ASKPASS", askpass); environment.insert("LC_ALL", "C.UTF-8");
         process->setProcessEnvironment(environment);
         if (!cwd.isEmpty()) process->setWorkingDirectory(cwd);
-        auto *dialog = new JobDialog(title, stepNames, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+        const bool removing = title.startsWith("Remove");
+        const QStringList names = !stepNames.isEmpty() ? stepNames : removing ? QStringList{"Prepare", "Remove"} : QStringList{"Prepare", "Download", "Install"};
+        // Without a program-specific rule, read the step from the words flatpak and pacman print.
+        const auto stepFor = stepOf ? stepOf : [names](const QString &text) {
+            const QString lower = text.toLower();
+            if (lower.contains("install") || lower.contains("remov") || lower.contains("uninstall")) return int(names.size()) - 1;
+            return lower.contains("download") || lower.contains("fetch") || lower.contains("resolving") ? 1 : 0;
+        };
+        auto *dialog = new JobDialog(title, names, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
         jobDialog = dialog;
-        packageActivityHistory.append(title + " · Running · progress unavailable");
-        refreshActivity(); statusBar()->showMessage(title + " — running");
-        connect(process, &QProcess::readyRead, this, [process, dialog, stepOf] {
+        connect(dialog->close, &QPushButton::clicked, this, [this] { jobFailed = false; refreshActivity(); });
+        packageActivityHistory.append(title + " · Running · progress unavailable"); packageJobs.append({title, names, 0, {}, false, false});
+        lastResult = 0;
+        refreshActivity();
+        connect(process, &QProcess::readyRead, this, [process, dialog, stepFor] {
             const QString text = QString::fromUtf8(process->readAll());
             dialog->feed(text);
-            if (stepOf) dialog->advanceTo(stepOf(text));
+            dialog->advanceTo(stepFor(text));
         });
-        connect(process, &QProcess::finished, this, [this, process, dialog, title](int code, QProcess::ExitStatus status) {
+        connect(process, &QProcess::finished, this, [this, process, dialog, title, names](int code, QProcess::ExitStatus status) {
             const bool ok = status == QProcess::NormalExit && code == 0;
             job = nullptr; process->deleteLater();
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
             dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
+            if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog->step, dialog->log->toPlainText(), true, ok};
             if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show();
-            statusBar()->showMessage(title + (ok ? " — done" : " — failed"), 6000);
+            if (!ok) jobFailed = true;
+            lastResult = ok ? 1 : 2;
             refreshActivity();
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
         });
@@ -451,6 +461,12 @@ public:
         process->start("setsid", QStringList{"-w", executable} + arguments);
         dialog->show();
         return true;
+    }
+    // AppStream's origin is not always a remote name ("flatpak"); flatpak would then read it as the app to install.
+    static QString flatpakRemote(const QString &origin) {
+        QProcess remotes; remotes.start("flatpak", {"remotes", "--system", "--columns=name"});
+        remotes.waitForFinished(5000);
+        return QString::fromUtf8(remotes.readAllStandardOutput()).split('\n').contains(origin) ? origin : QString("flathub");
     }
     // Starts the real operation for a button. false = not a catalogue app, the caller keeps the simulation.
     bool runOperation(const QString &key, const QString &name, const QString &action) {
@@ -461,7 +477,7 @@ public:
         const bool again = action == "Reinstall";
         if (package.source == Source::Flatpak) {
             QStringList arguments{"install", "--system", "-y", "--noninteractive"}; if (again) arguments << "--reinstall";
-            if (startJob((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{package.repo, package.name})) beginPending(key, name, action, package);
+            if (startJob((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{flatpakRemote(package.repo), package.name})) beginPending(key, name, action, package);
         } else if (package.source == Source::Repo) {
             if (startJob((again ? "Reinstall " : "Install ") + name, "pkexec", QStringList{"pacman", "-S", "--noconfirm"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name})) beginPending(key, name, action, package);
         } else installAur(key, name, action, package);
@@ -489,13 +505,11 @@ public:
             QMessageBox::information(this, "Clean chroot tools missing", "AUR packages are built in a clean chroot with pkgctl, from the devtools package.\n\nInstall it, then try again:\n\nsudo pacman -S --needed devtools");
             return;
         }
-        statusBar()->showMessage("Downloading the build files of " + package.name + "…");
         backend.aurInfo(package.name, [this, key, name, action, package](AurInfo info, QString failure) {
-            if (!failure.isEmpty()) { statusBar()->showMessage(failure); return; }
+            if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot install " + package.name, failure); return; }
             App request; request.base = info.base; request.name = package.name;
             backend.prepareAur(request, [this, key, name, action, package, info](QString recipe, QString commit, QString failure) {
                 if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot review " + package.name, failure); return; }
-                statusBar()->clearMessage();
                 const QString store = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/reviewed";
                 QString previousCommit;
                 const QString previous = loadReviewed(store, info.base, &previousCommit);
@@ -553,6 +567,22 @@ private:
     QDialog *activityDialog = nullptr;
     QListWidget *activityHistory = nullptr;
     QStringList packageActivityHistory;
+public:
+    // What the details window of each package operation showed, parallel to packageActivityHistory; title is empty for terminal jobs.
+    struct JobRecord { QString title; QStringList steps; int step = 0; QString log; bool finished = false, ok = false; };
+    QList<JobRecord> packageJobs;
+    void openJob(int index) {
+        if (index < 0 || index >= packageJobs.size()) return;
+        if (index == packageJobs.size() - 1 && jobDialog) { jobDialog->show(); jobDialog->raise(); jobDialog->activateWindow(); return; }
+        const JobRecord &record = packageJobs[index];
+        if (!record.finished) return;
+        auto *dialog = new JobDialog(record.title, record.steps, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->feed(record.log); dialog->showStep(record.step);
+        dialog->finish(record.ok, record.ok ? "Done" : "It did not finish. Open the details to see why.");
+        connect(dialog->close, &QPushButton::clicked, dialog, &QDialog::close);
+        dialog->show();
+    }
+private:
     QPushButton *updateAll = nullptr;
     QSettings settings;
     QWidget *sidebar = nullptr;
@@ -611,6 +641,9 @@ private:
     }
     bool eventFilter(QObject *object, QEvent *event) override {
         auto *widget = qobject_cast<QWidget *>(object);
+        if (event->type() == QEvent::MouseButtonRelease && widget && widget->property("jobIndex").isValid() && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton) {
+            openJob(widget->property("jobIndex").toInt()); return true;
+        }
         if (widget && widget->window() == this && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick || event->type() == QEvent::MouseButtonRelease)) {
             auto *mouse = static_cast<QMouseEvent *>(event);
             if (mouse->button() == Qt::BackButton || mouse->button() == Qt::ForwardButton) {
@@ -648,6 +681,8 @@ private:
     QPointer<QProcess> job;  // A package operation running in the background, shown by jobDialog
     QPointer<JobDialog> jobDialog;
     bool busy() const { return part || job; }
+    bool jobFailed = false;
+    int lastResult = 0;  // Shown on the Activity button until the Activity window is opened
     QHash<QString, int> appIndex;  // CatalogApp::key to index in backend.apps
     struct PendingOperation { QString key, name, action; Package package; bool active = false; QStringList leftovers; } pendingOp;
     bool settling = false;
@@ -1302,7 +1337,14 @@ int main(int argc, char **argv) {
             auto *jobView = static_cast<JobDialog *>(store.findChild<QDialog *>("jobDialog"));
             QElapsedTimer waited; waited.start();
             while (jobView && jobView->close->text() != "Close" && waited.elapsed() < 10000) QApplication::processEvents(QEventLoop::AllEvents, 50);
-            passed &= jobView && jobView->close->text() == "Close" && jobView->log->toPlainText().contains("Making package") && jobView->step == 3 && jobView->bar->value() == 100;
+            passed &= jobView && jobView->close->text() == "Close" && jobView->log->toPlainText().contains("Making package") && jobView->step == 3 && jobView->track->filled();
+            passed &= !store.packageJobs.isEmpty() && store.packageJobs.last().finished && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Making package");
+            QElapsedTimer closing; closing.start();
+            while (store.findChild<QDialog *>("jobDialog") && closing.elapsed() < 4000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+            store.openJob(store.packageJobs.size() - 1);  // From the history the finished window comes back with its log
+            auto *again = static_cast<JobDialog *>(store.findChild<QDialog *>("jobDialog"));
+            passed &= again && again->isVisible() && again->log->toPlainText().contains("Making package") && again->track->filled();
+            if (again) again->QDialog::close();
         }
         {   // Typing on Explore goes to the search box
             page->search->clear(); QKeyEvent typed(QEvent::KeyPress, Qt::Key_K, Qt::NoModifier, "k");
@@ -1376,10 +1418,9 @@ int main(int argc, char **argv) {
         auto *side = store.findChild<QWidget *>("sidebar");
         auto *nav = store.findChild<QButtonGroup *>("pageNavigation");
         toggle->click(); store.findChild<QVariantAnimation *>("sidebarMotion")->setCurrentTime(store.findChild<QVariantAnimation *>("sidebarMotion")->duration());
-        bool passed = store.findChild<QAbstractButton *>("activityButton")->height() == toggle->height() && side->width() == 56 && store.findChild<QFrame *>("sidebarDivider")->isHidden() && nav->checkedId() == 2 && !store.findChild<QToolButton *>("settingsButton");
+        bool passed = store.findChild<QAbstractButton *>("activityButton")->height() == 48 && side->width() == 56 && store.findChild<QFrame *>("sidebarDivider")->isHidden() && nav->checkedId() == 2 && !store.findChild<QToolButton *>("settingsButton");
         for (auto *button : nav->buttons()) {
-            auto *item = static_cast<QToolButton *>(button);
-            passed &= item->toolButtonStyle() == Qt::ToolButtonIconOnly && item->height() == 40 && !item->accessibleName().isEmpty();
+            passed &= button->height() == 40 && !button->accessibleName().isEmpty();
         }
         toggle->click(); store.findChild<QVariantAnimation *>("sidebarMotion")->setCurrentTime(store.findChild<QVariantAnimation *>("sidebarMotion")->duration());
         passed &= store.findChild<QAbstractButton *>("activityButton")->height() == 48 && side->width() == 156 && !store.findChild<QFrame *>("sidebarDivider")->isHidden() && nav->checkedId() == 2;

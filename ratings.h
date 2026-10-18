@@ -2,6 +2,8 @@
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QList>
+#include <QPair>
 #include <QString>
 
 // What people say about an app, from sources that publish it. -1 / 0 means "not available": the row is hidden.
@@ -10,6 +12,7 @@ struct Ratings {
     int reviews = 0;
     int histogram[5] = {0, 0, 0, 0, 0};  // Reviews with 1..5 stars
     qint64 installs = -1, installsMonth = -1;  // Flathub
+    QList<QPair<QString, int>> daily;          // Flathub installs per day, oldest first
     int aurVotes = -1;
     double aurPopularity = 0;
     double repoPercent = -1;     // pkgstats: share of reporting systems
@@ -31,5 +34,7 @@ inline void parseOdrs(const QByteArray &json, Ratings *out, int minReviews = 5) 
 inline void parseFlathubStats(const QByteArray &json, Ratings *out) {
     const QJsonObject o = QJsonDocument::fromJson(json).object();
     if (!o.contains("installs_total")) return;
+    const QJsonObject days = o.value("installs_per_day").toObject();
+    for (auto it = days.begin(); it != days.end(); ++it) out->daily.append({it.key(), it.value().toInt()});  // QJsonObject keys are sorted
     out->installs = qint64(o.value("installs_total").toDouble()); out->installsMonth = qint64(o.value("installs_last_month").toDouble());
 }

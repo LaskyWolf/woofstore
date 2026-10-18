@@ -160,30 +160,117 @@ private:
     }
 };
 
-class ActivityButton : public QAbstractButton {
-public:
-    bool compact = false, busy = false, indeterminate = false;
-    int progress = 100;
-    explicit ActivityButton(QWidget *parent = nullptr) : QAbstractButton(parent) {
-        setFixedHeight(48); setMinimumWidth(40); setFocusPolicy(Qt::StrongFocus);
-        setAccessibleName("Show activity"); setToolTip("Show activity"); setCursor(Qt::PointingHandCursor);
+// Lucide icons (ISC license) drawn on their 24 x 24 grid so every icon shares one stroke and follows the theme color.
+inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, const QColor &color) {
+    const qreal unit = box.width() / 24;
+    auto at = [&](qreal x, qreal y) { return QPointF(box.left() + x * unit, box.top() + y * unit); };
+    auto line = [&](qreal x1, qreal y1, qreal x2, qreal y2) { p.drawLine(at(x1, y1), at(x2, y2)); };
+    auto square = [&](qreal x, qreal y, qreal size, qreal radius) { p.drawRoundedRect(QRectF(at(x, y), QSizeF(size * unit, size * unit)), radius * unit, radius * unit); };
+    p.save(); p.setRenderHint(QPainter::Antialiasing); p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(color, 2 * unit, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    if (name == "calendar") { line(8, 2, 8, 6); line(16, 2, 16, 6); line(3, 10, 21, 10); square(3, 4, 18, 2); }
+    else if (name == "compass") {
+        p.drawEllipse(at(12, 12), 10 * unit, 10 * unit);
+        const QPointF needle[] = {at(16.24, 7.76), at(14.436, 13.171), at(13.171, 14.436), at(7.76, 16.24), at(9.564, 10.829), at(10.829, 9.564)};
+        p.drawPolygon(needle, 6);
+    } else if (name == "list") {
+        square(3, 3, 7, 1); square(3, 14, 7, 1);
+        for (qreal y : {4., 9., 15., 20.}) line(14, y, 21, y);
+    } else if (name == "refresh") {
+        for (int half = 0; half < 2; ++half) {   // The second half is the first turned around the center
+            p.save(); p.translate(at(12, 12)); p.rotate(180 * half); p.translate(-at(12, 12));
+            QPainterPath path; path.arcMoveTo(QRectF(at(3, 3), QSizeF(18 * unit, 18 * unit)), 180); path.arcTo(QRectF(at(3, 3), QSizeF(18 * unit, 18 * unit)), 180, -137);
+            path.lineTo(at(21, 8)); p.drawPath(path); line(21, 3, 21, 8); line(21, 8, 16, 8); p.restore();
+        }
+    } else if (name == "panel-close" || name == "panel-open") {
+        square(3, 3, 18, 2); line(9, 3, 9, 21);
+        if (name == "panel-close") { line(16, 15, 13, 12); line(13, 12, 16, 9); } else { line(14, 9, 17, 12); line(17, 12, 14, 15); }
     }
+    p.restore();
+}
+inline QIcon lucideIcon(const QString &name, int size = 22) {
+    QPixmap pixmap(size * 2, size * 2); pixmap.setDevicePixelRatio(2); pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap); drawLucide(p, name, QRectF(0, 0, size, size), QApplication::palette().color(QPalette::WindowText));
+    return QIcon(pixmap);
+}
+
+// A sidebar entry. The icon never moves; widening or narrowing the button only reveals or hides the label.
+class NavButton : public QAbstractButton {
+public:
+    QString glyph;
+    NavButton(const QString &label, const QString &icon, QWidget *parent = nullptr) : QAbstractButton(parent), glyph(icon) {
+        setText(label); setCheckable(true); setFixedHeight(40); setCursor(Qt::PointingHandCursor); setFocusPolicy(Qt::StrongFocus);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+    // 0 while only the icon fits, 1 when the whole label has room.
+    static qreal reveal(int width) { return qBound(0., (width - 84) / 48., 1.); }
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
+        if (isChecked() || underMouse()) { p.setPen(Qt::NoPen); p.setBrush(palette().color(isChecked() ? QPalette::Midlight : QPalette::Button)); p.drawRoundedRect(rect(), 8, 8); }
+        drawLucide(p, glyph, QRectF(9, height() / 2. - 11, 22, 22), palette().color(QPalette::WindowText));
+        const qreal shown = reveal(width());
+        if (shown > 0) {
+            QColor ink = palette().color(QPalette::WindowText); ink.setAlphaF(shown);
+            p.setPen(ink); p.drawText(QRectF(44 - (1 - shown) * 10, 0, width() - 48, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
+        }
+        if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(palette().color(QPalette::Highlight)); p.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 8, 8); }
+    }
+};
+
+class ActivityButton : public QAbstractButton {
+public:
+    bool compact = false, busy = false, indeterminate = false, attention = false;
+    int result = 0;  // Last package operation not yet looked at: 0 none, 1 succeeded, 2 failed
+    void setResult(int value) {
+        if (value == result) return;
+        result = value;
+        if (value) { pop.stop(); pop.start(); } else update();
+    }
+    int progress = 100;
+    explicit ActivityButton(QWidget *parent = nullptr) : QAbstractButton(parent) {
+        setFixedHeight(48); setMinimumWidth(40); setFocusPolicy(Qt::StrongFocus);
+        pop.setDuration(260); pop.setStartValue(0.); pop.setEndValue(1.); pop.setEasingCurve(QEasingCurve::OutBack);
+        connect(&pop, &QVariantAnimation::valueChanged, this, [this] { update(); });
+        setAccessibleName("Show activity"); setToolTip("Show activity"); setCursor(Qt::PointingHandCursor);
+    }
+protected:
+    // The check or cross springs in when a package operation ends.
+    void drawCalendar(QPainter &p, const QRectF &box) {
+        const qreal unit = box.width() / 24;
+        auto at = [&](qreal px, qreal py) { return QPointF(box.left() + px * unit, box.top() + py * unit); };
+        drawLucide(p, "calendar", box, palette().color(QPalette::WindowText));
+        if (!result) return;
+        p.save(); p.setRenderHint(QPainter::Antialiasing);
+        const qreal grow = pop.state() == QAbstractAnimation::Running ? pop.currentValue().toReal() : 1.;
+        p.translate(at(12, 16)); p.scale(grow, grow); p.translate(-at(12, 16));
+        p.setPen(QPen(QColor(result == 1 ? "#27ae60" : "#da4453"), 2.4 * unit, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        if (result == 1) { p.drawLine(at(9, 16), at(11, 18)); p.drawLine(at(11, 18), at(15, 14)); }
+        else { p.drawLine(at(14, 14), at(10, 18)); p.drawLine(at(10, 14), at(14, 18)); }
+        p.restore();
+    }
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
         if (underMouse() || hasFocus()) { p.setPen(Qt::NoPen); p.setBrush(palette().color(QPalette::Button)); p.drawRoundedRect(rect(), 8, 8); }
-        const int x = compact ? width() / 2 : 20;
-        QIcon::fromTheme("view-task").paint(&p, x - 10, 10, 20, 20);
+        const int x = 20;  // Same spot whether the sidebar is open or collapsed
+        drawCalendar(p, QRectF(x - 11, 9, 22, 22));
         if (busy && compact) {
             p.setPen(QPen(palette().color(QPalette::Highlight), 2));
-            p.drawArc(QRectF(x - 14, 6, 28, 28), 90 * 16, -(indeterminate ? 240 : progress * 360 / 100) * 16);
+            p.drawArc(QRectF(x - 18, 2, 36, 36), 90 * 16, -(indeterminate ? 240 : progress * 360 / 100) * 16);
         }
-        if (!compact) {
-            p.setPen(palette().color(QPalette::WindowText)); p.drawText(QRect(40, 5, width() - 44, 27), Qt::AlignVCenter, "Activity");
-            p.setPen(Qt::NoPen); p.setBrush(palette().color(QPalette::Mid)); p.drawRoundedRect(QRectF(12, 39, width() - 24, 3), 1.5, 1.5);
-            p.setBrush(palette().color(QPalette::Highlight));
-            p.drawRoundedRect(QRectF(12, 39, (width() - 24) * (indeterminate ? .3 : progress / 100.), 3), 1.5, 1.5);
+        if (attention) {  // Yellow dot: something needs the user
+            p.setPen(QPen(palette().color(QPalette::Window), 2)); p.setBrush(QColor("#f5c211"));
+            p.drawEllipse(QPointF(x + 10, 11), 5, 5);
+        }
+        if (const qreal shown = NavButton::reveal(width()); shown > 0) {
+            QColor ink = palette().color(QPalette::WindowText); ink.setAlphaF(shown);
+            p.setPen(ink); p.drawText(QRectF(44 - (1 - shown) * 10, 5, width() - 48, 27), Qt::AlignVCenter, "Activity");
+            QColor track = palette().color(QPalette::Mid), bar = palette().color(QPalette::Highlight); track.setAlphaF(shown); bar.setAlphaF(shown);
+            p.setPen(Qt::NoPen); p.setBrush(track); p.drawRoundedRect(QRectF(12, 39, width() - 24, 3), 1.5, 1.5);
+            p.setBrush(bar); p.drawRoundedRect(QRectF(12, 39, (width() - 24) * (indeterminate ? .3 : progress / 100.), 3), 1.5, 1.5);
         }
         if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(palette().color(QPalette::Highlight)); p.drawRoundedRect(rect().adjusted(1, 1, -2, -2), 8, 8); }
     }
+private:
+    QVariantAnimation pop;
 };

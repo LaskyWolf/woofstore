@@ -41,6 +41,7 @@ public:
     bool hero = false, spotlight = false, artworkBelow = false;
     QPixmap artwork;  // First publisher screenshot, once downloaded
     QPushButton *quickInstall = nullptr;
+    bool artworkRequested = false;
     explicit ExploreTile(const CatalogApp &value, bool featured = false, QWidget *parent = nullptr)
         : QAbstractButton(parent), app(value), group(categoryGroup(value.categories)), hero(featured) {
         setCursor(Qt::PointingHandCursor);
@@ -52,7 +53,8 @@ public:
     }
     // The card's color comes from its icon: saturated pixels count most. Icons without color use the category color.
     QColor tint() const {
-        if (tintCache.isValid()) return tintCache;
+        if (tintCache.isValid() && tintKey == app.key) return tintCache;  // The hover preview reuses one card for many apps
+        tintKey = app.key;
         const QImage image = catalogIcon(app).pixmap(32, 32).toImage().convertToFormat(QImage::Format_ARGB32);
         double r = 0, g = 0, b = 0, total = 0;
         for (int y = 0; y < image.height(); ++y) for (int x = 0; x < image.width(); ++x) {
@@ -81,7 +83,7 @@ public:
         if (hero) return width < 650 ? 220 : 246;
         QFont body = font();
         const int textWidth = !spotlight && hasArtwork() && width >= 340 ? int(width * .54) : width;
-        return (spotlight ? width / 2 + 110 : 110) + QFontMetrics(body).boundingRect(QRect(0, 0, qMax(80, textWidth - 28), 500), Qt::TextWordWrap, app.summary).height();
+        return (spotlight ? qMin(width / 2, 280) + 110 : 110) + QFontMetrics(body).boundingRect(QRect(0, 0, qMax(80, textWidth - 28), 500), Qt::TextWordWrap, app.summary).height();
     }
     QSize sizeHint() const override { return QSize(190, heightForWidth(190)); }
     // Layout decisions use the screenshot list, so cards keep their place while images download.
@@ -176,6 +178,7 @@ protected:
 private:
     QMetaObject::Connection installBinding;
     mutable QColor tintCache;
+    mutable QString tintKey;
     bool hovered = false;
     QPointF pointer;
     void placeQuickInstall() {
@@ -188,11 +191,19 @@ private:
 class ExploreMasonry : public QWidget {
 public:
     QList<ExploreTile *> tiles, order;
-    explicit ExploreMasonry(QWidget *parent = nullptr) : QWidget(parent) {}
+    int fill = 0;  // Minimum height; the last band grows to reach it so every list is equally tall
+    std::function<void()> onResized;
+    // Each list gets its own arrangement, fixed for the session so resizing never reshuffles it.
+    explicit ExploreMasonry(QWidget *parent = nullptr) : QWidget(parent), seed(QRandomGenerator::global()->generate()) {}
     void arrange() {
+        const int natural = layout(0, 0);
+        if (fill > natural && bandCount > 0) layout((fill - natural) / bandCount, (fill - natural) % bandCount);  // Spread the missing height over all bands
+    }
+    // Places the cards and returns the height used. Every band gets `extra` pixels more, the last one also `remainder`.
+    int layout(int extra, int remainder) {
         QList<ExploreTile *> visible;
         for (auto *tile : order.isEmpty() ? tiles : order) if (!tile->isHidden()) visible.append(tile);
-        if (visible.isEmpty()) { setFixedHeight(1); return; }
+        if (visible.isEmpty()) { setFixedHeight(1); bandCount = 0; return 1; }
         const int count = qMin(int(visible.size()), qBound(2, width() / 185, 5));
         const int gap = 12;
         for (auto *tile : visible) tile->spotlight = false;
@@ -200,12 +211,36 @@ public:
         // Each band is fully partitioned into one image card and paired small cards.
         // ponytail: sections hold a handful of cards; virtualize if a section ever shows hundreds.
         while (offset < visible.size()) {
-            const int span = count >= 4 && band % 2 == 0 ? 2 : 1;
+            if (visible.size() - offset == 1 && band > 0) { visible[offset]->hide(); break; }  // A lone card would stretch across every column
+            // Some bands hold a short wide card (two or three columns) next to single cards.
+            const int bannerSpan = count == 5 && roll(band, 4) % 2 ? 3 : 2;
+            const int lanes = count - bannerSpan + 1;
+            if (count >= 4 && band > 0 && roll(band, 3) % 3 == 0 && int(visible.size()) - offset >= lanes + 1) {
+                int banner = -1;
+                for (int i = 0; i < lanes && banner < 0; ++i) if (visible[offset + i]->hasArtwork()) banner = i;
+                if (banner >= 0) {
+                    const int columnWidth = (width() - gap * (count - 1)) / count, bannerLane = roll(band, 5) % lanes;
+                    QList<ExploreTile *> row; for (int i = 0; i < lanes; ++i) row.append(visible[offset + i]);
+                    row.move(banner, bannerLane);
+                    int bandHeight = 0;
+                    for (int lane = 0; lane < lanes; ++lane) bandHeight = qMax(bandHeight, row[lane]->heightForWidth(lane == bannerLane ? columnWidth * bannerSpan + gap * (bannerSpan - 1) : columnWidth));
+                    bandHeight += extra + (offset + lanes >= visible.size() ? remainder : 0);
+                    int column = 0;
+                    for (int lane = 0; lane < lanes; ++lane) {
+                        const int laneSpan = lane == bannerLane ? bannerSpan : 1, x = column * (columnWidth + gap), right = column + laneSpan;
+                        row[lane]->setGeometry(x, y, right == count ? width() - x : columnWidth * laneSpan + gap * (laneSpan - 1), bandHeight);
+                        column = right;
+                    }
+                    offset += lanes; y += bandHeight + gap; ++band; continue;
+                }
+            }
+            const int span = count >= 4 && (band + (seed & 1)) % 2 == 0 ? 2 : 1;
             int size = qMin(int(visible.size()) - offset, 2 * (count - span) + 1);
             if (size > 1 && size % 2 == 0) --size;
             int chosen = -1;
-            for (int i = 0; i < size; ++i)
-                if (visible[offset + i]->hasArtwork()) { chosen = i; break; }
+            QList<int> candidates;
+            for (int i = 0; i < size; ++i) if (visible[offset + i]->hasArtwork()) candidates.append(i);
+            if (!candidates.isEmpty()) chosen = candidates[roll(band, 1) % candidates.size()];
             if (size < 3) chosen = -1;  // An image card needs a pair of cards beside it, never a band of its own
             if (chosen < 0) size = qMin(count, int(visible.size()) - offset);
             QList<ExploreTile *> group;
@@ -224,7 +259,8 @@ public:
                 if (large) height += gap + group[i + 1]->heightForWidth(columnWidth);
                 bandHeight = qMax(bandHeight, height);
             }
-            const int largeLane = pairs ? band % (pairs + 1) : 0;
+            bandHeight += extra + (offset + size >= visible.size() ? remainder : 0);
+            const int largeLane = pairs ? roll(band, 2) % (pairs + 1) : 0;
             int column = 0, next = 0;
             for (int lane = 0; lane < pairs + (large ? 1 : 0); ++lane) {
                 const int laneSpan = large && lane == largeLane ? span : 1;
@@ -244,10 +280,16 @@ public:
             }
             offset += size; y += bandHeight + gap; ++band;
         }
+        bandCount = band;
         setFixedHeight(qMax(1, y - gap));
+        return qMax(1, y - gap);
     }
 protected:
-    void resizeEvent(QResizeEvent *) override { arrange(); }
+    void resizeEvent(QResizeEvent *) override { arrange(); if (onResized) onResized(); }
+private:
+    int bandCount = 0;
+    quint32 seed;
+    quint32 roll(int band, int salt) const { return ((seed ^ (band * 2654435761u)) * 40503u + salt * 97u) >> 7; }
 };
 
 static int desktopAnimationDuration(int milliseconds) {
@@ -348,7 +390,7 @@ public:
     QWidget *filterPanel = nullptr;
     struct Section { QLabel *heading = nullptr; ExploreMasonry *masonry = nullptr; };
     QTabBar *flathubTabs = nullptr;
-    bool browsing = false;
+    bool browsing = false, equalizing = false;
     QList<Section> sections;  // Trending, Popular, New and Updated on Flathub. Empty ones are hidden.
     AppList *results = nullptr, *others = nullptr;
     PreviewOperations *operations = nullptr;
@@ -377,20 +419,20 @@ public:
         const QStringList titles{"On Flathub", "Popular on Flathub", "New on Flathub", "Updated on Flathub"};
         for (int i = 0; i < titles.size(); ++i) {
             Section section{text(titles[i], 12, true), new ExploreMasonry};
-            section.masonry->setObjectName("exploreSection"); layout->addWidget(section.heading);
+            section.masonry->setObjectName("exploreSection"); section.masonry->onResized = [this] { equalize(); }; layout->addWidget(section.heading);
             if (i == 0) {
                 flathubTabs = new QTabBar; flathubTabs->setObjectName("flathubTabs"); flathubTabs->setExpanding(false); flathubTabs->setDrawBase(false);
                 flathubTabs->setAccessibleName("Flathub lists"); flathubTabs->setFocusPolicy(Qt::StrongFocus);
                 for (const QString &tab : {"Trending", "Popular", "New", "Updated"}) flathubTabs->addTab(tab);
                 QFont tabFont = flathubTabs->font(); tabFont.setPointSizeF(tabFont.pointSizeF() + 3); flathubTabs->setFont(tabFont);
                 layout->addWidget(flathubTabs, 0, Qt::AlignHCenter);
-                connect(flathubTabs, &QTabBar::currentChanged, this, [this] { updateSections(); });
+                connect(flathubTabs, &QTabBar::currentChanged, this, [this] { updateSections(); QTimer::singleShot(0, this, [this] { equalize(); }); });
             }
             layout->addWidget(section.masonry);
             sections.append(section);
         }
         buildHoverPreview();
-        countLabel = text("", 12, true); countLabel->setObjectName("resultsHeading"); layout->addWidget(countLabel);
+        countLabel = text("", 12, true); countLabel->setObjectName("resultsHeading"); countLabel->setContentsMargins(0, 20, 0, 0); layout->addWidget(countLabel);
         results = new AppList; results->setObjectName("exploreResults"); results->setAccessibleName("Apps"); layout->addWidget(results);
         loadMore = new QPushButton("Load more"); loadMore->setObjectName("loadMore"); loadMore->setMinimumHeight(32);
         layout->addWidget(loadMore, 0, Qt::AlignHCenter);
@@ -439,6 +481,35 @@ public:
         updateAutoplay();
     }
     void openPreview(const CatalogApp &app) { if (onOpen) onOpen(app); }
+    // Every list shows enough cards to fill the same height, so switching tabs never moves the page.
+    void equalize() {
+        if (equalizing || !flathubTabs) return;
+        equalizing = true;
+        const int width = sections[qMax(0, flathubTabs->currentIndex())].masonry->width();
+        const int minimum = 15, cap = 780;  // Every list shows at least `minimum` cards and, beyond that, as many as fit under `cap` pixels
+        int tallest = 0;
+        for (const auto &section : sections) {
+            auto *masonry = section.masonry;
+            if (masonry->tiles.isEmpty()) continue;
+            masonry->fill = 0; masonry->resize(width, masonry->height());
+            const int total = masonry->tiles.size();
+            int best = qMin(minimum, total);
+            for (int count = best; count <= total; ++count) {
+                for (int i = 0; i < total; ++i) masonry->tiles[i]->setVisible(i < count);
+                masonry->arrange();
+                if (count > minimum && masonry->height() > cap) break;
+                best = count;
+            }
+            for (int i = 0; i < total; ++i) masonry->tiles[i]->setVisible(i < best);
+            masonry->arrange();
+            tallest = qMax(tallest, masonry->height());
+        }
+        for (const auto &section : sections) {  // Lists differ by less than a band; the bands share the difference
+            section.masonry->fill = tallest; section.masonry->arrange();
+            for (auto *tile : section.masonry->tiles) if (!tile->isHidden()) loadArtwork(tile);
+        }
+        equalizing = false;
+    }
     void updateSections() {
         const int current = flathubTabs->currentIndex();
         bool anyFlathub = false;
@@ -457,7 +528,7 @@ public:
     void showDirectory() { verticalScrollBar()->setValue(countLabel->mapTo(widget(), QPoint()).y() - 16); }
     QList<ExploreTile *> sectionTiles() const {
         QList<ExploreTile *> tiles;
-        for (const auto &section : sections) if (!section.masonry->isHidden()) tiles.append(section.masonry->tiles);
+        for (const auto &section : sections) if (!section.masonry->isHidden()) for (auto *tile : section.masonry->tiles) if (!tile->isHidden()) tiles.append(tile);
         return tiles;
     }
     void applyFilters() {
@@ -619,7 +690,7 @@ protected:
         QScrollArea::resizeEvent(event);
         hideHoverPreview();
         carousel->setFixedHeight(viewport()->width() < 650 ? 220 : 246);
-        QTimer::singleShot(0, this, [this] { for (const auto &section : sections) section.masonry->arrange(); });
+        QTimer::singleShot(0, this, [this] { equalize(); });
     }
 private:
     QList<double> scores;
@@ -748,7 +819,8 @@ private:
         if (tile->quickInstall) tile->quickInstall->installEventFilter(this);
     }
     void loadArtwork(ExploreTile *tile) {
-        if (tile->app.screenshots.isEmpty()) return;
+        if (tile->app.screenshots.isEmpty() || tile->artworkRequested) return;
+        tile->artworkRequested = true;
         backend->fetchImage(tile->app.screenshots.first(), tile, [tile](const QPixmap &image) { tile->artwork = image; tile->update(); });
     }
     // Featured slides and the suggestion sections, from Flathub and pkgstats rankings.
@@ -794,17 +866,17 @@ private:
         if (!dots.isEmpty()) dots.first()->setChecked(true);
 
         QSet<int> used;
-        QList<QList<int>> picks{ranked(rankings.trending, 8, false, &used), ranked(rankings.popular, 8, false, &used), ranked(rankings.added, 8, false, &used), ranked(rankings.updated, 8, false, &used)};
+        QList<QList<int>> picks{ranked(rankings.trending, 20, false, &used), ranked(rankings.popular, 20, false, &used), ranked(rankings.added, 20, false, &used), ranked(rankings.updated, 20, false, &used)};
         for (int s = 0; s < sections.size(); ++s) {
             auto *masonry = sections[s].masonry;
             qDeleteAll(masonry->tiles); masonry->tiles.clear(); masonry->order.clear();
             for (int index : picks[s]) {
                 auto *tile = new ExploreTile(apps[index], false, masonry); masonry->tiles.append(tile);
-                tile->installEventFilter(this); tile->show(); loadArtwork(tile);
+                tile->installEventFilter(this); tile->show();
                 connect(tile, &QAbstractButton::clicked, this, [this, tile] { openPreview(tile->app); });
             }
-            masonry->arrange();
         }
+        equalize();
         for (int t = 0; t < sections.size(); ++t) flathubTabs->setTabEnabled(t, !sections[t].masonry->tiles.isEmpty());
         if (!flathubTabs->isTabEnabled(flathubTabs->currentIndex()))
             for (int t = 0; t < sections.size(); ++t) if (flathubTabs->isTabEnabled(t)) { flathubTabs->setCurrentIndex(t); break; }
