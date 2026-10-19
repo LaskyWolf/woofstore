@@ -43,7 +43,7 @@ Optional programs: `flatpak` for Flathub apps, `paru` for AUR packages and AUR u
 - **Desktop links:** the installer makes WoofStore the program for `appstream:` links. KRunner's "Install" suggestions for apps you do not have open on that app's page. Starting the store again hands the request to the open window. By hand: `gio mime x-scheme-handler/appstream io.github.laskywolf.WoofStore.desktop`.
 - **Activity:** history of package operations. Click an entry to reopen its window.
 
-Run the store as your normal user. Package managers ask for elevated privileges only when needed: polkit for `pkexec`, a KDialog or Zenity prompt for the `sudo` that `pkgctl` and `paru` use.
+Run the store as your normal user. Package managers ask for elevated privileges only when needed: polkit for `pkexec`, a KDialog or Zenity prompt for the `sudo` that the chroot tools and `paru` use.
 
 ## Installing and removing
 
@@ -51,7 +51,7 @@ Install, Reinstall and Remove run the real package manager in the background, on
 
 - **Flatpak:** `flatpak install --system -y <remote> <id>`.
 - **Repository:** `pkexec pacman -S --needed --noconfirm <name>`.
-- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds with `pkgctl build` in a clean chroot (package `devtools`) and installs only the built file with `pkexec pacman -U`. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Build dependencies from the AUR are not resolved. Builds happen under `~/.cache/WoofStore/aur-build`, not `/tmp`.
+- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds in a clean chroot (package `devtools`) and installs only the built file with `pkexec pacman -U`. The chroot lives in `~/.cache/WoofStore/chroot` and uses the repositories of your `/etc/pacman.conf`, so dependencies from `multilib` or CachyOS resolve. The first build creates it (about 1 GB, a few minutes, asks for your password); later builds only update it. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Dependencies that exist only in the AUR are not resolved: install them first. Build files are downloaded under `~/.cache/WoofStore/aur-build`, not `/tmp`.
 - **AppImage:** copied to `~/.local/share/WoofStore/appimages` and added to the app menu, without being run. Updates need the update information the publisher embeds in the file (`gh-releases-zsync` or `zsync`): the store compares the checksum of your file with the one the publisher lists, and a newer file replaces the old one.
 - **Remove:** a dialog asks what else to delete. Caches are pre-selected; settings and data (`~/.config`, `~/.local/share`, `~/.var/app`) are not. Only folders whose name equals the app or package name are offered.
 - **Open:** Flatpaks start with `flatpak run`; other apps through their desktop file.

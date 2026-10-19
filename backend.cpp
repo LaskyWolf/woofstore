@@ -1249,3 +1249,53 @@ void Backend::ratings(const CatalogApp &app, std::function<void(Ratings)> done) 
     }
     finish();
 }
+
+QString chrootPacmanConf(const QString &hostConf, const std::function<QString(const QString &)> &readFile) {
+    static const QStringList keptOptions{"Architecture", "SigLevel", "LocalFileSigLevel", "RemoteFileSigLevel"};
+    constexpr int maxServers = 10;
+    QString options = "[options]\n", repos, section, body;
+    int servers = 0;
+    auto flush = [&] {
+        if (!section.isEmpty() && servers > 0) repos += "\n[" + section + "]\n" + body;
+        body.clear(); servers = 0;
+    };
+    for (QString line : hostConf.split('\n')) {
+        line = line.trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) { flush(); section = line.mid(1, line.size() - 2).trimmed(); continue; }
+        const int eq = line.indexOf('=');
+        if (eq < 0) continue;
+        const QString key = line.left(eq).trimmed(), value = line.mid(eq + 1).trimmed();
+        if (section == "options") { if (keptOptions.contains(key)) options += key + " = " + value + "\n"; continue; }
+        if (section.isEmpty()) continue;
+        if (key == "SigLevel" || key == "Usage") body += key + " = " + value + "\n";
+        else if (key == "Server" && servers < maxServers) { body += "Server = " + value + "\n"; ++servers; }
+        else if (key == "Include") {
+            for (QString item : readFile(value).split('\n')) {
+                item = item.trimmed();
+                const int at = item.indexOf('=');
+                if (at < 0 || item.startsWith('#') || item.left(at).trimmed() != "Server" || servers >= maxServers) continue;
+                body += "Server = " + item.mid(at + 1).trimmed() + "\n"; ++servers;
+            }
+        }
+    }
+    flush();
+    return options + repos;
+}
+
+QString aurBuildScript() {
+    // makepkg.conf comes from devtools (the same file pkgctl uses). mkarchroot, arch-nspawn and makechrootpkg ask for root with sudo themselves.
+    return "root=$3; [ -n \"$root\" ] && [ -f \"$root/pacman.conf\" ] || { echo \"No build environment folder\"; exit 1; }\n"
+           "if [ -f \"$root/root/.arch-chroot\" ]; then\n"
+           "  echo \"==> Updating the build environment\"\n"
+           "  arch-nspawn -C \"$root/pacman.conf\" \"$root/root\" pacman -Syu --noconfirm || exit\n"
+           "else\n"
+           "  echo \"==> Preparing the build environment (first time only)\"\n"
+           "  [ -e \"$root/root\" ] && sudo rm -rf --one-file-system -- \"$root/root\"\n"
+           "  mkarchroot -C \"$root/pacman.conf\" -M /usr/share/devtools/makepkg.conf.d/x86_64.conf \"$root/root\" base-devel || exit\n"
+           "fi\n"
+           "makechrootpkg -r \"$root\" || exit\n"
+           "found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; "
+           "[ \"$(pacman -Qpq \"$f\")\" = \"$1\" ] && found=$f; done; [ -n \"$found\" ] || { echo \"No built package named $1\"; exit 1; }\n"
+           "found=$(realpath \"$found\"); echo \"==> Installing package\"; pkexec pacman -U --noconfirm $2 \"$found\"\n";
+}

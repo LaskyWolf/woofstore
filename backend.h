@@ -56,6 +56,13 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
 // The bash script of an update run: $1 is this program, the other arguments are "id<TAB>url<TAB>name" per AppImage. Each step prints "==> <name>" first.
 // A failed system upgrade stops everything; a failed AUR, Flatpak or AppImage step is reported and the script goes on, ending with status 1.
 QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames);
+// The pacman.conf for the AUR build chroot, made from the host's: same repositories and signature levels (so multilib and CachyOS
+// resolve), host-only paths dropped, and every "Include" replaced by that file's Server lines (the chroot has no mirrorlist files of its own).
+// readFile returns the text of a file, or an empty string when it cannot be read. Repositories left without a server are dropped.
+QString chrootPacmanConf(const QString &hostConf, const std::function<QString(const QString &)> &readFile);
+// The bash script of an AUR build: $1 package name, $2 "--needed" or "", $3 chroot directory holding pacman.conf (see chrootPacmanConf).
+// Creates the chroot the first time, otherwise updates it, builds the package in the current directory and installs the exact built file.
+QString aurBuildScript();
 // Imports a newer file of an imported AppImage and removes the old copy and its launcher; the old one stays when the import fails.
 QString replaceAppImage(const QString &file, const QString &oldId, const QString &dataRoot, QString *error);
 Apps importedAppImages(const QString &dataRoot);

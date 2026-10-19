@@ -338,6 +338,44 @@ int main(int argc, char **argv) {
         assert(names == QStringList({"Flatpak apps"}) && !onlyApps.contains("pacman") && !onlyApps.contains("paru") && run(onlyApps, {}).second == "flatpak update -y --noninteractive\n");
     }
     {
+        // The chroot's pacman.conf keeps the host's repositories and expands mirrorlist includes
+        const QString host = "[options]\nHoldPkg = pacman\nCacheDir = /host/cache\nArchitecture = auto\nParallelDownloads = 10\nSigLevel = Required DatabaseOptional\nLocalFileSigLevel = Optional\n"
+                             "[core]\nInclude = /etc/pacman.d/mirrorlist\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n[cachyos]\nSigLevel = Optional TrustAll\nInclude = /missing\n[own]\nServer = https://own.example/$repo\n#[commented]\n";
+        const auto files = [](const QString &path) { return path == "/etc/pacman.d/mirrorlist" ? QString("# comment\nServer = https://a.example/$repo/os/$arch\nServer = https://b.example/$repo/os/$arch\n") : QString(); };
+        const QString conf = chrootPacmanConf(host, files);
+        assert(conf.startsWith("[options]\nArchitecture = auto\nSigLevel = Required DatabaseOptional\nLocalFileSigLevel = Optional\n"));
+        assert(!conf.contains("CacheDir") && !conf.contains("HoldPkg") && !conf.contains("Include") && !conf.contains("[cachyos]") && !conf.contains("commented"));  // Host paths, unreadable repos and comments are gone
+        assert(conf.contains("[core]\nServer = https://a.example/$repo/os/$arch\nServer = https://b.example/$repo/os/$arch\n") && conf.contains("[multilib]\nServer = https://a.example") && conf.contains("[own]\nServer = https://own.example/$repo\n"));
+        QTemporaryDir dir; QFile out(dir.path() + "/pacman.conf"); assert(out.open(QIODevice::WriteOnly)); out.write(conf.toUtf8()); out.close();
+        QProcess check; check.start("pacman-conf", {"--config", out.fileName(), "--repo-list"}); check.waitForFinished(5000);  // pacman itself must accept it
+        if (check.error() != QProcess::FailedToStart) assert(check.exitCode() == 0 && QString::fromUtf8(check.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts) == QStringList({"core", "multilib", "own"}));
+        // The build script, run with stand-ins for the devtools programs and pacman
+        QTemporaryDir bin, work; const QString log = bin.path() + "/log";
+        auto stub = [&](const QString &name, const QString &body) { QFile f(bin.path() + "/" + name); assert(f.open(QIODevice::WriteOnly)); f.write("#!/bin/sh\n" + body.toUtf8()); f.close(); f.setPermissions(QFile::permissions(f.fileName()) | QFile::ExeOwner); };
+        stub("mkarchroot", "echo \"mkarchroot $*\" >> \"$LOG\"; mkdir -p \"$5\"; touch \"$5/.arch-chroot\"\n");
+        stub("arch-nspawn", "echo \"arch-nspawn $*\" >> \"$LOG\"\n");
+        stub("makechrootpkg", "echo \"makechrootpkg $*\" >> \"$LOG\"; [ -z \"$FAIL_BUILD\" ] && : > foo-1-1-x86_64.pkg.tar.zst; exit ${FAIL_BUILD:-0}\n");
+        stub("pacman", "[ \"$1\" = -Qpq ] && echo foo\n");
+        stub("pkexec", "echo \"pkexec $*\" >> \"$LOG\"\n");
+        stub("sudo", "echo \"sudo $*\" >> \"$LOG\"; \"$@\"\n");
+        const QString chroot = work.path() + "/chroot"; QDir().mkpath(chroot); { QFile f(chroot + "/pacman.conf"); assert(f.open(QIODevice::WriteOnly)); f.write(conf.toUtf8()); }
+        auto build = [&](const QString &flag) {
+            QFile::remove(log);
+            QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env); p.setWorkingDirectory(work.path());
+            p.start("bash", {"-c", aurBuildScript(), "x", "foo", flag, chroot}); p.waitForFinished(20000);
+            QFile f(log); return QPair<int, QString>(p.exitCode(), f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString());
+        };
+        auto first = build("--needed");
+        assert(first.first == 0 && first.second.indexOf("mkarchroot -C " + chroot + "/pacman.conf") >= 0 && first.second.contains("base-devel") && !first.second.contains("arch-nspawn")
+               && first.second.indexOf("mkarchroot") < first.second.indexOf("makechrootpkg -r " + chroot) && first.second.indexOf("makechrootpkg") < first.second.indexOf("pkexec pacman -U --noconfirm --needed " + work.path() + "/foo-1-1-x86_64.pkg.tar.zst"));
+        auto again = build("");  // The chroot exists now: it is updated, not created
+        assert(again.first == 0 && !again.second.contains("mkarchroot") && again.second.contains("arch-nspawn -C " + chroot + "/pacman.conf " + chroot + "/root pacman -Syu --noconfirm") && again.second.contains("pkexec pacman -U --noconfirm " + work.path() + "/foo-1-1"));
+        qputenv("FAIL_BUILD", "1");
+        auto failed = build("--needed");
+        assert(failed.first == 1 && !failed.second.contains("pkexec"));  // A failed build installs nothing
+        qunsetenv("FAIL_BUILD");
+    }
+    {
         const auto orphans = parseOrphans("libfoo\t1.2 MiB\nbar-git\n\n$(rm -rf x)\t3 MiB\n");
         assert(orphans.size() == 2 && orphans[0].name == "libfoo" && orphans[0].size == "1.2 MiB" && orphans[1].name == "bar-git" && orphans[1].size.isEmpty());
     }

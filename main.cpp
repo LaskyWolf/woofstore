@@ -528,8 +528,9 @@ public:
         pendingOp.leftovers.clear();
     }
     void installAur(const QString &key, const QString &name, const QString &action, const Package &package) {
-        if (QStandardPaths::findExecutable("pkgctl").isEmpty()) {
-            QMessageBox::information(this, "Clean chroot tools missing", "AUR packages are built in a clean chroot with pkgctl, from the devtools package.\n\nInstall it, then try again:\n\nsudo pacman -S --needed devtools");
+        for (const char *tool : {"mkarchroot", "makechrootpkg", "arch-nspawn"}) {
+            if (!QStandardPaths::findExecutable(tool).isEmpty()) continue;
+            QMessageBox::information(this, "Clean chroot tools missing", "AUR packages are built in a clean chroot with the tools of the devtools package.\n\nInstall it, then try again:\n\nsudo pacman -S --needed devtools");
             return;
         }
         backend.aurInfo(package.name, [this, key, name, action, package](AurInfo info, QString failure) {
@@ -545,11 +546,14 @@ public:
                     QString error;
                     if (!backend.reviewedFilesUnchanged(&error)) { QMessageBox::warning(this, "Build files changed", error); return; }
                     saveReviewed(store, info.base, commit, recipe);
-                    // pkgctl builds in a clean chroot; only the exact built package is installed, as root.
-                    const QString script = "pkgctl build || exit; found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; "
-                        "[ \"$(pacman -Qpq \"$f\")\" = \"$1\" ] && found=$f; done; [ -n \"$found\" ] || { echo \"No built package named $1\"; exit 1; }; "
-                        "found=$(realpath \"$found\"); echo \"==> Installing package\"; pkexec pacman -U --noconfirm $2 \"$found\"";
-                    if (startJob("Install " + name + " from the AUR", "bash", {"-c", script, "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed"}, backend.reviewPath(),
+                    // The chroot copies your pacman.conf, so multilib and CachyOS repositories resolve; only the exact built package is installed, as root.
+                    const QString chroot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/chroot";
+                    QDir().mkpath(chroot);
+                    const auto readText = [](const QString &path) { QFile file(path); return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString(); };
+                    QSaveFile conf(chroot + "/pacman.conf");
+                    const QByteArray text = chrootPacmanConf(readText("/etc/pacman.conf"), readText).toUtf8();
+                    if (!conf.open(QIODevice::WriteOnly) || conf.write(text) != text.size() || !conf.commit()) { QMessageBox::warning(this, "Cannot prepare the build", "Cannot write " + chroot + "/pacman.conf"); return; }
+                    if (startJob("Install " + name + " from the AUR", "bash", {"-c", aurBuildScript(), "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed", chroot}, backend.reviewPath(),
                         {"Prepare", "Download", "Build", "Install"}, [](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; })) beginPending(key, name, action, package);
                 };
                 dialog->showReview(info, recipe, previous);
