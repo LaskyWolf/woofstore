@@ -389,7 +389,7 @@ public:
     QLineEdit *search = nullptr;
     QToolButton *filters = nullptr;
     QWidget *filterPanel = nullptr;
-    struct Section { QLabel *heading = nullptr; ExploreMasonry *masonry = nullptr; };
+    struct Section { ExploreMasonry *masonry = nullptr; };
     QTabBar *flathubTabs = nullptr;
     bool browsing = false, equalizing = false;
     QList<Section> sections;  // Trending, Popular, New and Updated on Flathub. Empty ones are hidden.
@@ -416,11 +416,10 @@ public:
         buildCarousel(layout);
         offlineNote = text("Offline: showing saved suggestions."); offlineNote->setObjectName("offlineNote"); offlineNote->hide();
         layout->addWidget(offlineNote);
-        // The four Flathub lists share one heading and a tab bar; only the selected list is shown.
-        const QStringList titles{"On Flathub", "Popular on Flathub", "New on Flathub", "Updated on Flathub"};
-        for (int i = 0; i < titles.size(); ++i) {
-            Section section{text(titles[i], 12, true), new ExploreMasonry};
-            section.masonry->setObjectName("exploreSection"); section.masonry->onResized = [this] { equalize(); }; layout->addWidget(section.heading);
+        // The four Flathub lists share one tab bar (Trending, Popular, New, Updated); only the selected list is shown.
+        for (int i = 0; i < 4; ++i) {
+            Section section{new ExploreMasonry};
+            section.masonry->setObjectName("exploreSection"); section.masonry->onResized = [this] { equalize(); };
             if (i == 0) {
                 flathubTabs = new QTabBar; flathubTabs->setObjectName("flathubTabs"); flathubTabs->setExpanding(false); flathubTabs->setDrawBase(false);
                 flathubTabs->setAccessibleName("Flathub lists"); flathubTabs->setFocusPolicy(Qt::StrongFocus);
@@ -521,12 +520,11 @@ public:
                 anyFlathub |= filled;
                 sections[i].masonry->setVisible(browsing && filled && i == current);
                 if (!sections[i].masonry->isHidden()) QTimer::singleShot(0, sections[i].masonry, [m = sections[i].masonry] { m->arrange(); });
-                if (i) sections[i].heading->hide();
             }
         }
-        sections[0].heading->setVisible(browsing && anyFlathub); flathubTabs->setVisible(browsing && anyFlathub);
+        flathubTabs->setVisible(browsing && anyFlathub);
     }
-    void showCollection() { verticalScrollBar()->setValue(sections.first().heading->mapTo(widget(), QPoint()).y() - 16); }
+    void showCollection() { verticalScrollBar()->setValue(flathubTabs->mapTo(widget(), QPoint()).y() - 16); }
     void showDirectory() { verticalScrollBar()->setValue(countLabel->mapTo(widget(), QPoint()).y() - 16); }
     QList<ExploreTile *> sectionTiles() const {
         QList<ExploreTile *> tiles;

@@ -158,6 +158,7 @@ inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, cons
         box.lineTo(at(3, 8)); box.arcTo(QRectF(at(3, 6), QSizeF(4 * unit, 4 * unit)), 180, -90); box.lineTo(at(11, 6)); p.drawPath(box);
     } else if (name == "grid") { square(3, 3, 7, 1); square(14, 3, 7, 1); square(3, 14, 7, 1); square(14, 14, 7, 1);
     } else if (name == "circle-check") { p.drawEllipse(at(12, 12), 10 * unit, 10 * unit); line(8, 12, 11, 15); line(11, 15, 16, 9);
+    } else if (name == "search-x") { p.drawEllipse(at(11, 11), 8 * unit, 8 * unit); line(21, 21, 16.65, 16.65); line(13.5, 8.5, 8.5, 13.5); line(8.5, 8.5, 13.5, 13.5);
     } else if (name == "circle-x") { p.drawEllipse(at(12, 12), 10 * unit, 10 * unit); line(15, 9, 9, 15); line(9, 9, 15, 15);
     } else if (name == "newspaper") {
         p.drawRoundedRect(QRectF(at(6, 2), QSizeF(16 * unit, 20 * unit)), 2 * unit, 2 * unit);

@@ -694,7 +694,7 @@ private:
     QLabel *installedLabel = nullptr;
     QWidget *installedBody = nullptr;
     AppList *installedList = nullptr;
-    QLabel *installedEmpty = nullptr;
+    QWidget *installedEmpty = nullptr;
     bool inventoryEnabled = true;
     QVBoxLayout *terminalLayout = nullptr;
     QWidget *terminalHost = nullptr;
@@ -792,7 +792,16 @@ private:
         installedLabel = label("Loading installed software…", 0, true);
         content->addWidget(installedLabel);
         installedList = new AppList; installedList->setObjectName("installedApps"); installedList->setAccessibleName("Installed apps, alphabetically sorted"); content->addWidget(installedList);
-        installedEmpty = label("No installed app matches."); content->addWidget(installedEmpty); installedEmpty->hide();
+        installedEmpty = new QWidget; installedEmpty->setObjectName("installedEmpty"); installedEmpty->setMinimumHeight(300);
+        auto *emptyLayout = new QVBoxLayout(installedEmpty); emptyLayout->setSpacing(10); emptyLayout->setAlignment(Qt::AlignCenter);
+        auto *emptyIcon = new QLabel; emptyIcon->setAlignment(Qt::AlignCenter);
+        QPixmap emptyPixmap(144, 144); emptyPixmap.setDevicePixelRatio(2); emptyPixmap.fill(Qt::transparent);
+        { QPainter painter(&emptyPixmap); drawLucide(painter, "search-x", QRectF(0, 0, 72, 72), palette().color(QPalette::PlaceholderText), 1.4); }
+        emptyIcon->setPixmap(emptyPixmap);
+        auto *emptyTitle = label("No installed app matches", 18, true); emptyTitle->setObjectName("installedEmptyTitle"); emptyTitle->setAlignment(Qt::AlignCenter);
+        auto *emptyHint = label("Nothing here by that name. Maybe it never made it onto your system."); emptyHint->setAlignment(Qt::AlignCenter); emptyHint->setMinimumWidth(480); emptyHint->setForegroundRole(QPalette::PlaceholderText);
+        for (QWidget *part : {static_cast<QWidget *>(emptyIcon), static_cast<QWidget *>(emptyTitle), static_cast<QWidget *>(emptyHint)}) emptyLayout->addWidget(part);
+        content->addWidget(installedEmpty); installedEmpty->hide();
         connect(installedList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) { openInstalledItem(item); });
         connect(installedList, &QListWidget::itemActivated, this, [this](QListWidgetItem *item) { openInstalledItem(item); });
         content->addStretch();
@@ -1896,7 +1905,7 @@ int main(int argc, char **argv) {
         return passed ? 0 : 1;
     }
     if (parser.value("page") == "installed") store.selectPage(1);
-    if (parser.isSet("installed-preview")) store.previewInstalled();
+    if (parser.isSet("installed-preview")) { store.previewInstalled(); if (!parser.value("search").isEmpty()) store.findChild<QLineEdit *>("installedSearch")->setText(parser.value("search")); }
     if (parser.value("page") == "updates") store.selectPage(2);
     if (parser.value("page") == "news") store.previewNews();
     if (parser.isSet("updates-preview")) store.previewUpdates(parser.value("updates-preview"));
