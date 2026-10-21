@@ -60,9 +60,22 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
 // resolve), host-only paths dropped, and every "Include" replaced by that file's Server lines (the chroot has no mirrorlist files of its own).
 // readFile returns the text of a file, or an empty string when it cannot be read. Repositories left without a server are dropped.
 QString chrootPacmanConf(const QString &hostConf, const std::function<QString(const QString &)> &readFile);
-// The bash script of an AUR build: $1 package name, $2 "--needed" or "", $3 chroot directory holding pacman.conf (see chrootPacmanConf).
-// Creates the chroot the first time, otherwise updates it, builds the package in the current directory and installs the exact built file.
+// The bash script of an AUR build: $1 package name, $2 "--needed" or "", $3 chroot directory holding pacman.conf (see chrootPacmanConf),
+// then one "name<TAB>folder" per package to build, dependencies first and $1 last. Creates the chroot the first time, otherwise updates it,
+// builds each folder (each build sees the packages built before it) and installs the exact built files: dependencies as dependencies, then $1.
 QString aurBuildScript();
+// Dependencies listed in a .SRCINFO (depends, makedepends, checkdepends), with version constraints, without the package's own names.
+QStringList srcinfoDependencies(const QString &srcinfo);
+QString dependencyName(const QString &dependency);  // "lito>=0.8.5" -> "lito"
+// The order to build root and the AUR packages it needs: every package after the ones it needs. needs maps a package to its AUR dependencies.
+QStringList aurBuildOrder(const QString &root, const QMap<QString, QStringList> &needs);
+// The build files of one package as the user reviewed them; the folder stays alive as long as the snapshot does.
+struct ReviewSnapshot {
+    std::shared_ptr<QTemporaryDir> dir;
+    QMap<QString, QByteArray> hashes;
+    QString path() const { return dir ? dir->path() + "/package" : QString(); }
+};
+bool reviewUnchanged(const ReviewSnapshot &snapshot, QString *error);  // False when a reviewed file changed, appeared or went missing since the review
 // Imports a newer file of an imported AppImage and removes the old copy and its launcher; the old one stays when the import fails.
 QString replaceAppImage(const QString &file, const QString &oldId, const QString &dataRoot, QString *error);
 Apps importedAppImages(const QString &dataRoot);
@@ -105,6 +118,9 @@ public:
     void prepareAur(const App &app, std::function<void(QString, QString, QString)> done);
     bool reviewedFilesUnchanged(QString *error) const;
     QString reviewPath() const;
+    ReviewSnapshot reviewSnapshot() const { return {review, reviewedHashes}; }
+    // Calls done with the dependencies (as written, with versions) that no configured repository can provide.
+    void missingFromRepos(const QStringList &dependencies, std::function<void(QStringList)> done);
     void orphans(std::function<void(QList<Orphan>)> done);  // Packages installed as dependencies that nothing needs any more
     void readCommand(const QString &program, const QStringList &args,
                      std::function<void(int, QString, QString)> done, int timeout = 30000);

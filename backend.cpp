@@ -1005,22 +1005,35 @@ void Backend::prepareAur(const App &app, std::function<void(QString, QString, QS
 
 QString Backend::reviewPath() const { return review ? review->path() + "/package" : QString(); }
 
-bool Backend::reviewedFilesUnchanged(QString *error) const {
-    if (!reviewComplete || !review) { *error = "Download and review the build files first."; return false; }
+bool reviewUnchanged(const ReviewSnapshot &snapshot, QString *error) {
+    if (!snapshot.dir) { *error = "Download and review the build files first."; return false; }
     QSet<QString> actual;
-    QDirIterator it(reviewPath(), QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    const QString root = snapshot.path();
+    QDirIterator it(root, QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         const QString path = it.next();
-        const QString name = QDir(reviewPath()).relativeFilePath(path);
+        const QString name = QDir(root).relativeFilePath(path);
         if (name.startsWith(".git/")) continue;
         actual.insert(name);
-        if (it.fileInfo().isSymLink() || !reviewedHashes.contains(name) || digestFile(path) != reviewedHashes.value(name)) {
+        if (it.fileInfo().isSymLink() || !snapshot.hashes.contains(name) || digestFile(path) != snapshot.hashes.value(name)) {
             *error = "The downloaded build files changed after review. Download and review them again."; return false;
         }
     }
-    if (actual.size() != reviewedHashes.size()) { *error = "A reviewed file was removed. Download the recipe again."; return false; }
+    if (actual.size() != snapshot.hashes.size()) { *error = "A reviewed file was removed. Download the recipe again."; return false; }
     error->clear();
     return true;
+}
+
+bool Backend::reviewedFilesUnchanged(QString *error) const {
+    if (!reviewComplete) { *error = "Download and review the build files first."; return false; }
+    return reviewUnchanged(reviewSnapshot(), error);
+}
+
+void Backend::missingFromRepos(const QStringList &dependencies, std::function<void(QStringList)> done) {
+    if (dependencies.isEmpty()) { done({}); return; }
+    // pacman -Sp prints the download URL when the dependency (a name, a provided name or a versioned one) can be installed from a repository.
+    readCommand("bash", QStringList{"-c", "for d; do pacman -Sp -- \"$d\" >/dev/null 2>&1 || echo \"$d\"; done", "woof-store-deps"} + dependencies,
+                [done](int, QString output, QString) { done(output.split('\n', Qt::SkipEmptyParts)); }, 60000);
 }
 
 void Backend::loadRankings() {
@@ -1285,7 +1298,8 @@ QString chrootPacmanConf(const QString &hostConf, const std::function<QString(co
 
 QString aurBuildScript() {
     // makepkg.conf comes from devtools (the same file pkgctl uses). mkarchroot, arch-nspawn and makechrootpkg ask for root with sudo themselves.
-    return "root=$3; [ -n \"$root\" ] && [ -f \"$root/pacman.conf\" ] || { echo \"No build environment folder\"; exit 1; }\n"
+    return "target=$1; flag=$2; root=$3; shift 3\n"
+           "[ -n \"$root\" ] && [ -f \"$root/pacman.conf\" ] || { echo \"No build environment folder\"; exit 1; }\n"
            "if [ -f \"$root/root/.arch-chroot\" ]; then\n"
            "  echo \"==> Updating the build environment\"\n"
            "  arch-nspawn -C \"$root/pacman.conf\" \"$root/root\" pacman -Syu --noconfirm || exit\n"
@@ -1294,8 +1308,46 @@ QString aurBuildScript() {
            "  [ -e \"$root/root\" ] && sudo rm -rf --one-file-system -- \"$root/root\"\n"
            "  mkarchroot -C \"$root/pacman.conf\" -M /usr/share/devtools/makepkg.conf.d/x86_64.conf \"$root/root\" base-devel || exit\n"
            "fi\n"
-           "makechrootpkg -r \"$root\" || exit\n"
-           "found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; "
-           "[ \"$(pacman -Qpq \"$f\")\" = \"$1\" ] && found=$f; done; [ -n \"$found\" ] || { echo \"No built package named $1\"; exit 1; }\n"
-           "found=$(realpath \"$found\"); echo \"==> Installing package\"; pkexec pacman -U --noconfirm $2 \"$found\"\n";
+           "built=(); main=\n"
+           "for item; do\n"
+           "  name=${item%%$'\\t'*}; cd \"${item#*$'\\t'}\" || exit\n"
+           "  extra=(); for p in \"${built[@]}\"; do extra+=(-I \"$p\"); done\n"
+           "  makechrootpkg -r \"$root\" \"${extra[@]}\" || exit\n"
+           "  found=; for f in ./*.pkg.tar.*; do case \"$f\" in *.sig) continue;; esac; [ \"$(pacman -Qpq \"$f\")\" = \"$name\" ] && found=$f; done\n"
+           "  [ -n \"$found\" ] || { echo \"No built package named $name\"; exit 1; }\n"
+           "  main=$(realpath \"$found\"); [ \"$name\" = \"$target\" ] || built+=(\"$main\")\n"
+           "done\n"
+           "echo \"==> Installing package\"\n"
+           "if [ ${#built[@]} -gt 0 ]; then pkexec sh -c 'main=$1; shift; pacman -U --noconfirm --asdeps --needed \"$@\" && pacman -U --noconfirm $0 \"$main\"' \"$flag\" \"$main\" \"${built[@]}\"\n"
+           "else pkexec pacman -U --noconfirm $flag \"$main\"; fi\n";
+}
+
+QString dependencyName(const QString &dependency) {
+    const int at = dependency.indexOf(QRegularExpression("[<>=]"));
+    return (at < 0 ? dependency : dependency.left(at)).trimmed();
+}
+
+QStringList srcinfoDependencies(const QString &srcinfo) {
+    static const QRegularExpression dependsLine("^\\s*(?:depends|makedepends|checkdepends)(?:_x86_64)?\\s*=\\s*(\\S.*?)\\s*$");
+    QStringList found, own;
+    for (const QString &line : srcinfo.split('\n')) {
+        const auto match = dependsLine.match(line);
+        if (match.hasMatch()) { if (!found.contains(match.captured(1))) found << match.captured(1); }
+        else if (line.trimmed().startsWith("pkgname =")) own << line.section('=', 1).trimmed();
+    }
+    QStringList result;
+    for (const QString &dependency : found) if (!own.contains(dependencyName(dependency))) result << dependency;
+    return result;
+}
+
+QStringList aurBuildOrder(const QString &root, const QMap<QString, QStringList> &needs) {
+    QStringList order, visiting;
+    std::function<void(const QString &)> visit = [&](const QString &name) {
+        if (order.contains(name) || visiting.contains(name)) return;  // A cycle cannot be built; the build itself reports it
+        visiting << name;
+        for (const QString &need : needs.value(name)) if (needs.contains(need)) visit(need);
+        order << name;
+    };
+    visit(root);
+    return order;
 }

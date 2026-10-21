@@ -533,33 +533,71 @@ public:
             QMessageBox::information(this, "Clean chroot tools missing", "AUR packages are built in a clean chroot with the tools of the devtools package.\n\nInstall it, then try again:\n\nsudo pacman -S --needed devtools");
             return;
         }
-        backend.aurInfo(package.name, [this, key, name, action, package](AurInfo info, QString failure) {
-            if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot install " + package.name, failure); return; }
-            App request; request.base = info.base; request.name = package.name;
-            backend.prepareAur(request, [this, key, name, action, package, info](QString recipe, QString commit, QString failure) {
-                if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot review " + package.name, failure); return; }
-                const QString store = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/reviewed";
-                QString previousCommit;
-                const QString previous = loadReviewed(store, info.base, &previousCommit);
-                auto *dialog = new AurReviewDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
-                dialog->onApprove = [this, key, name, action, package, info, recipe, commit, store] {
-                    QString error;
-                    if (!backend.reviewedFilesUnchanged(&error)) { QMessageBox::warning(this, "Build files changed", error); return; }
-                    saveReviewed(store, info.base, commit, recipe);
-                    // The chroot copies your pacman.conf, so multilib and CachyOS repositories resolve; only the exact built package is installed, as root.
-                    const QString chroot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/chroot";
-                    QDir().mkpath(chroot);
-                    const auto readText = [](const QString &path) { QFile file(path); return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString(); };
-                    QSaveFile conf(chroot + "/pacman.conf");
-                    const QByteArray text = chrootPacmanConf(readText("/etc/pacman.conf"), readText).toUtf8();
-                    if (!conf.open(QIODevice::WriteOnly) || conf.write(text) != text.size() || !conf.commit()) { QMessageBox::warning(this, "Cannot prepare the build", "Cannot write " + chroot + "/pacman.conf"); return; }
-                    if (startJob("Install " + name + " from the AUR", "bash", {"-c", aurBuildScript(), "woof-store-aur", package.name, action == "Reinstall" ? "" : "--needed", chroot}, backend.reviewPath(),
-                        {"Prepare", "Download", "Build", "Install"}, [](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; })) beginPending(key, name, action, package);
-                };
-                dialog->showReview(info, recipe, previous);
-                dialog->open();
+        auto plan = std::make_shared<AurPlan>();
+        plan->root = package.name; plan->queue << package.name; plan->seen << package.name;
+        reviewNextAur(plan, key, name, action, package);
+    }
+    // Packages to build for one install: the one asked for and the AUR packages it needs that no repository has. Each is reviewed before anything is built.
+    struct AurPlan {
+        QString root;
+        QStringList queue, seen;                  // To review next; everything ever queued
+        QMap<QString, QStringList> needs;         // Reviewed package -> its AUR dependencies
+        QMap<QString, ReviewSnapshot> files;      // Reviewed package -> the files the user approved
+    };
+    void reviewNextAur(std::shared_ptr<AurPlan> plan, const QString &key, const QString &name, const QString &action, const Package &package) {
+        if (plan->queue.isEmpty()) { buildAur(plan, key, name, action, package); return; }
+        const QString current = plan->queue.takeFirst();
+        const QString who = current == plan->root ? current : current + " (needed by " + plan->root + ")";
+        backend.aurInfo(current, [=, this](AurInfo info, QString failure) {
+            if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot install " + plan->root, who + ": " + failure); return; }
+            App request; request.base = info.base; request.name = current;
+            backend.prepareAur(request, [=, this](QString recipe, QString commit, QString failure) {
+                if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot review " + current, failure); return; }
+                QFile srcinfo(backend.reviewPath() + "/.SRCINFO");
+                const QStringList dependencies = srcinfo.open(QIODevice::ReadOnly) ? srcinfoDependencies(QString::fromUtf8(srcinfo.readAll())) : QStringList();
+                backend.missingFromRepos(dependencies, [=, this](QStringList missing) {
+                    QStringList aurNames;
+                    for (const QString &dependency : missing) if (!aurNames.contains(dependencyName(dependency))) aurNames << dependencyName(dependency);
+                    const QString store = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/reviewed";
+                    QString previousCommit;
+                    const QString previous = loadReviewed(store, info.base, &previousCommit);
+                    auto *dialog = new AurReviewDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+                    dialog->setWindowTitle("Review " + who);
+                    dialog->onApprove = [=, this] {
+                        QString error;
+                        if (!backend.reviewedFilesUnchanged(&error)) { QMessageBox::warning(this, "Build files changed", error); return; }
+                        saveReviewed(store, info.base, commit, recipe);
+                        plan->files[current] = backend.reviewSnapshot();
+                        plan->needs[current] = aurNames;
+                        for (const QString &need : aurNames) if (!plan->seen.contains(need)) { plan->seen << need; plan->queue << need; }
+                        if (plan->seen.size() > 8) { QMessageBox::warning(this, "Too many AUR dependencies", plan->root + " needs more than 8 AUR packages. Build it by hand."); return; }
+                        reviewNextAur(plan, key, name, action, package);
+                    };
+                    dialog->showReview(info, recipe, previous);
+                    if (!aurNames.isEmpty()) dialog->facts->setText(dialog->facts->text() + "\n\nNeeds these packages from the AUR, reviewed next: " + aurNames.join(", "));
+                    dialog->open();
+                });
             });
         });
+    }
+    void buildAur(std::shared_ptr<AurPlan> plan, const QString &key, const QString &name, const QString &action, const Package &package) {
+        const QStringList order = aurBuildOrder(plan->root, plan->needs);
+        QStringList items;
+        for (const QString &item : order) {
+            QString error;
+            if (!reviewUnchanged(plan->files.value(item), &error)) { QMessageBox::warning(this, "Build files changed", item + ": " + error); return; }
+            items << item + '\t' + plan->files.value(item).path();
+        }
+        // The chroot copies your pacman.conf, so multilib and CachyOS repositories resolve; only the exact built packages are installed, as root.
+        const QString chroot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/chroot";
+        QDir().mkpath(chroot);
+        const auto readText = [](const QString &path) { QFile file(path); return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString(); };
+        QSaveFile conf(chroot + "/pacman.conf");
+        const QByteArray text = chrootPacmanConf(readText("/etc/pacman.conf"), readText).toUtf8();
+        if (!conf.open(QIODevice::WriteOnly) || conf.write(text) != text.size() || !conf.commit()) { QMessageBox::warning(this, "Cannot prepare the build", "Cannot write " + chroot + "/pacman.conf"); return; }
+        // The job keeps the reviewed folders alive through plan: it is captured by the step function below.
+        if (startJob("Install " + name + " from the AUR", "bash", QStringList{"-c", aurBuildScript(), "woof-store-aur", plan->root, action == "Reinstall" ? "" : "--needed", chroot} + items, plan->files.value(plan->root).path(),
+            {"Prepare", "Download", "Build", "Install"}, [plan](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; })) beginPending(key, name, action, package);
     }
     void removeApp(const QString &key, const QString &name, const CatalogApp &app) {
         Package package;

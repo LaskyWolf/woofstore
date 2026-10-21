@@ -354,26 +354,38 @@ int main(int argc, char **argv) {
         auto stub = [&](const QString &name, const QString &body) { QFile f(bin.path() + "/" + name); assert(f.open(QIODevice::WriteOnly)); f.write("#!/bin/sh\n" + body.toUtf8()); f.close(); f.setPermissions(QFile::permissions(f.fileName()) | QFile::ExeOwner); };
         stub("mkarchroot", "echo \"mkarchroot $*\" >> \"$LOG\"; mkdir -p \"$5\"; touch \"$5/.arch-chroot\"\n");
         stub("arch-nspawn", "echo \"arch-nspawn $*\" >> \"$LOG\"\n");
-        stub("makechrootpkg", "echo \"makechrootpkg $*\" >> \"$LOG\"; [ -z \"$FAIL_BUILD\" ] && : > foo-1-1-x86_64.pkg.tar.zst; exit ${FAIL_BUILD:-0}\n");
-        stub("pacman", "[ \"$1\" = -Qpq ] && echo foo\n");
+        stub("makechrootpkg", "echo \"makechrootpkg $(basename \"$PWD\") $*\" >> \"$LOG\"; [ -z \"$FAIL_BUILD\" ] && : > \"$(basename \"$PWD\")-1-1-x86_64.pkg.tar.zst\"; exit ${FAIL_BUILD:-0}\n");
+        stub("pacman", "[ \"$1\" = -Qpq ] && basename \"$2\" | sed 's/-1-1-.*//'\n");
         stub("pkexec", "echo \"pkexec $*\" >> \"$LOG\"\n");
         stub("sudo", "echo \"sudo $*\" >> \"$LOG\"; \"$@\"\n");
         const QString chroot = work.path() + "/chroot"; QDir().mkpath(chroot); { QFile f(chroot + "/pacman.conf"); assert(f.open(QIODevice::WriteOnly)); f.write(conf.toUtf8()); }
-        auto build = [&](const QString &flag) {
+        QDir().mkpath(work.path() + "/foo"); QDir().mkpath(work.path() + "/dep");
+        auto build = [&](const QString &flag, const QStringList &items) {
             QFile::remove(log);
-            QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env); p.setWorkingDirectory(work.path());
-            p.start("bash", {"-c", aurBuildScript(), "x", "foo", flag, chroot}); p.waitForFinished(20000);
+            QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env);
+            p.start("bash", QStringList{"-c", aurBuildScript(), "x", "foo", flag, chroot} + items); p.waitForFinished(20000);
             QFile f(log); return QPair<int, QString>(p.exitCode(), f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString());
         };
-        auto first = build("--needed");
+        const QString foo = "foo\t" + work.path() + "/foo", dep = "dep\t" + work.path() + "/dep";
+        auto first = build("--needed", {foo});
         assert(first.first == 0 && first.second.indexOf("mkarchroot -C " + chroot + "/pacman.conf") >= 0 && first.second.contains("base-devel") && !first.second.contains("arch-nspawn")
-               && first.second.indexOf("mkarchroot") < first.second.indexOf("makechrootpkg -r " + chroot) && first.second.indexOf("makechrootpkg") < first.second.indexOf("pkexec pacman -U --noconfirm --needed " + work.path() + "/foo-1-1-x86_64.pkg.tar.zst"));
-        auto again = build("");  // The chroot exists now: it is updated, not created
-        assert(again.first == 0 && !again.second.contains("mkarchroot") && again.second.contains("arch-nspawn -C " + chroot + "/pacman.conf " + chroot + "/root pacman -Syu --noconfirm") && again.second.contains("pkexec pacman -U --noconfirm " + work.path() + "/foo-1-1"));
+               && first.second.indexOf("mkarchroot") < first.second.indexOf("makechrootpkg foo -r " + chroot) && first.second.indexOf("makechrootpkg") < first.second.indexOf("pkexec pacman -U --noconfirm --needed " + work.path() + "/foo/foo-1-1-x86_64.pkg.tar.zst"));
+        auto again = build("", {foo});  // The chroot exists now: it is updated, not created
+        assert(again.first == 0 && !again.second.contains("mkarchroot") && again.second.contains("arch-nspawn -C " + chroot + "/pacman.conf " + chroot + "/root pacman -Syu --noconfirm") && again.second.contains("pkexec pacman -U --noconfirm " + work.path() + "/foo/foo-1-1"));
+        // An AUR dependency is built first, is seen by the next build, and is installed as a dependency before the package itself
+        auto both = build("--needed", {dep, foo});
+        const int depBuild = both.second.indexOf("makechrootpkg dep"), fooBuild = both.second.indexOf("makechrootpkg foo");
+        assert(both.first == 0 && depBuild >= 0 && depBuild < fooBuild && both.second.contains("makechrootpkg foo -r " + chroot + " -I " + work.path() + "/dep/dep-1-1-x86_64.pkg.tar.zst")
+               && !both.second.contains("makechrootpkg dep -r " + chroot + " -I")
+               && both.second.contains("pkexec sh -c main=$1; shift; pacman -U --noconfirm --asdeps --needed \"$@\" && pacman -U --noconfirm $0 \"$main\" --needed " + work.path() + "/foo/foo-1-1-x86_64.pkg.tar.zst " + work.path() + "/dep/dep-1-1-x86_64.pkg.tar.zst"));
         qputenv("FAIL_BUILD", "1");
-        auto failed = build("--needed");
-        assert(failed.first == 1 && !failed.second.contains("pkexec"));  // A failed build installs nothing
+        auto failed = build("--needed", {dep, foo});
+        assert(failed.first == 1 && !failed.second.contains("pkexec") && !failed.second.contains("makechrootpkg foo"));  // A failed build installs nothing and stops the rest
         qunsetenv("FAIL_BUILD");
+        // Reading the dependencies of a .SRCINFO and ordering the builds
+        const QString srcinfo = "pkgbase = foo\n\tpkgver = 1\n\tmakedepends = cmake\n\tmakedepends = lito>=0.8.5\n\tdepends = bar\n\tdepends_x86_64 = lib32-baz\n\tcheckdepends = cmake\n\tprovides = notadep\n\toptdepends = opt: not needed\n\npkgname = foo\n\tdepends = foo-libs\n\npkgname = foo-libs\n";
+        assert(srcinfoDependencies(srcinfo) == QStringList({"cmake", "lito>=0.8.5", "bar", "lib32-baz"}) && dependencyName("lito>=0.8.5") == "lito" && dependencyName("a<2") == "a" && dependencyName("plain") == "plain");
+        assert(aurBuildOrder("foo", {{"foo", {"a", "b"}}, {"a", {"b"}}, {"b", {}}}) == QStringList({"b", "a", "foo"}) && aurBuildOrder("x", {{"x", {"y"}}, {"y", {"x"}}}) == QStringList({"y", "x"}) && aurBuildOrder("solo", {}) == QStringList({"solo"}));
     }
     {
         const auto orphans = parseOrphans("libfoo\t1.2 MiB\nbar-git\n\n$(rm -rf x)\t3 MiB\n");
