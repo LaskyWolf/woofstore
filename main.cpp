@@ -548,14 +548,14 @@ public:
         if (plan->queue.isEmpty()) { buildAur(plan, key, name, action, package); return; }
         const QString current = plan->queue.takeFirst();
         const QString who = current == plan->root ? current : current + " (needed by " + plan->root + ")";
-        backend.aurInfo(current, [=, this](AurInfo info, QString failure) {
+        backend.aurInfo(current, [=](AurInfo info, QString failure) {
             if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot install " + plan->root, who + ": " + failure); return; }
             App request; request.base = info.base; request.name = current;
-            backend.prepareAur(request, [=, this](QString recipe, QString commit, QString failure) {
+            backend.prepareAur(request, [=](QString recipe, QString commit, QString failure) {
                 if (!failure.isEmpty()) { QMessageBox::warning(this, "Cannot review " + current, failure); return; }
                 QFile srcinfo(backend.reviewPath() + "/.SRCINFO");
                 const QStringList dependencies = srcinfo.open(QIODevice::ReadOnly) ? srcinfoDependencies(QString::fromUtf8(srcinfo.readAll())) : QStringList();
-                backend.missingFromRepos(dependencies, [=, this](QStringList missing) {
+                backend.missingFromRepos(dependencies, [=](QStringList missing) {
                     QStringList aurNames;
                     for (const QString &dependency : missing) if (!aurNames.contains(dependencyName(dependency))) aurNames << dependencyName(dependency);
                     const QString store = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/reviewed";
@@ -563,7 +563,7 @@ public:
                     const QString previous = loadReviewed(store, info.base, &previousCommit);
                     auto *dialog = new AurReviewDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
                     dialog->setWindowTitle("Review " + who);
-                    dialog->onApprove = [=, this] {
+                    dialog->onApprove = [=] {
                         QString error;
                         if (!backend.reviewedFilesUnchanged(&error)) { QMessageBox::warning(this, "Build files changed", error); return; }
                         saveReviewed(store, info.base, commit, recipe);
