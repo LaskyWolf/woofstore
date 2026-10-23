@@ -186,6 +186,7 @@ public:
     QPushButton *close = nullptr;
     QToolButton *details = nullptr;
     QStringList stepNames; int step = 0;
+    bool done = false;  // While the operation runs, closing the window only hides it: the store still writes its output here
 
     explicit JobDialog(const QString &title, const QStringList &names = {}, QWidget *parent = nullptr) : QDialog(parent), stepNames(names.isEmpty() ? QStringList{"Prepare", "Install"} : names) {
         setObjectName("jobDialog"); setWindowTitle(title);  // No setMinimumWidth: it would stop the layout from setting the window minimum
@@ -206,6 +207,8 @@ public:
         connect(close, &QPushButton::clicked, this, &QDialog::hide);
         showStep(0);
     }
+    void reject() override { if (done) QDialog::reject(); else hide(); }
+    void closeEvent(QCloseEvent *event) override { if (done) QDialog::closeEvent(event); else { event->ignore(); hide(); } }
     void showStep(int index) { step = qBound(0, index, int(stepNames.size())); track->setStep(step); }
     void advanceTo(int index) { if (index > step) showStep(index); }
     // Output arrives in chunks; keep colors and progress-bar redraws out of the log.
@@ -220,6 +223,7 @@ public:
         }
     }
     void finish(bool ok, const QString &message) {
+        done = true;
         if (ok) step = stepNames.size();
         track->finish(ok);
         phase->setText(message); close->setText("Close"); close->setToolTip({});

@@ -12,6 +12,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include "installflow.h"
+#include "jobrunner.h"
 
 static QLabel *label(const QString &text, int size = 0, bool bold = false) {
     auto *item = new QLabel(text);
@@ -194,7 +195,11 @@ public:
         appDetails->onBack = [this] { moveHistory(-1); };
         appDetails->onOpenAddon = [this](const CatalogApp &app) { openDetails(app); };
         qApp->installEventFilter(this);
-        if (inventoryEnabled) { QTimer::singleShot(0, this, &Store::loadNews); QTimer::singleShot(3000, this, &Store::checkReboot); }
+        if (inventoryEnabled) {
+            QTimer::singleShot(0, this, &Store::loadNews); QTimer::singleShot(3000, this, &Store::checkReboot);
+            QTimer::singleShot(0, this, &Store::resumeJob);
+            if (settings.value("orphansAfterRestart", false).toBool()) { settings.remove("orphansAfterRestart"); QTimer::singleShot(4000, this, [this] { showOrphans(true); }); }
+        }
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
         connect(&backend, &Backend::installedChanged, this, [this] { renderInstalled(); settleOperation(); previewOperations.refreshButtons(); appDetails->refreshRemove();
             if (inventoryEnabled && !updatesChecked) checkForUpdates();  // Once at start, when the installed list is known
@@ -440,50 +445,93 @@ public:
             helper.write("#!/bin/sh\nif command -v kdialog >/dev/null; then exec kdialog --title WoofStore --password \"${1:-Password}\"; fi\nexec zenity --password --title=WoofStore\n");
             helper.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
         }
-        auto *process = new QProcess(this);
-        job = process;
-        process->setProcessChannelMode(QProcess::MergedChannels);
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.insert("SUDO_ASKPASS", askpass); environment.insert("LC_ALL", "C.UTF-8");
-        process->setProcessEnvironment(environment);
-        if (!cwd.isEmpty()) process->setWorkingDirectory(cwd);
         const bool removing = title.startsWith("Remove");
         const QStringList names = !stepNames.isEmpty() ? stepNames : removing ? QStringList{"Prepare", "Remove"} : QStringList{"Prepare", "Download", "Install"};
-        // Without a program-specific rule, read the step from the words flatpak and pacman print.
-        const auto stepFor = stepOf ? stepOf : [names](const QString &text) {
+        QString error;
+        if (!launchJob(jobFolder(), title, names, executable, arguments, environment, cwd, &error)) { QMessageBox::warning(this, "Cannot start " + title, error); return false; }
+        watchJob(title, names, stepOf);
+        return true;
+    }
+    static QString jobFolder() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/job"; }
+    // Shows a job that runs outside the store (see jobrunner.h): the window, the activity record and a timer that reads its output.
+    // Used for a job just started and for one found still running when the store starts.
+    void watchJob(const QString &title, const QStringList &names, const std::function<int(const QString &)> &stepOf = {}) {
+        // Without a program-specific rule, read the step from the "==> Name" lines of the update script, then from the words flatpak and pacman print.
+        const auto current = std::make_shared<int>(0);
+        const std::function<int(const QString &)> stepFor = stepOf ? stepOf : [names, current](const QString &text) {
+            for (int i = 0; i < names.size(); ++i) if (text.contains("==> " + names[i])) *current = i;
             const QString lower = text.toLower();
-            if (lower.contains("install") || lower.contains("remov") || lower.contains("uninstall")) return int(names.size()) - 1;
-            return lower.contains("download") || lower.contains("fetch") || lower.contains("resolving") ? 1 : 0;
+            if (*current == 0 && (lower.contains("install") || lower.contains("remov"))) return int(names.size()) - 1;
+            if (*current == 0 && (lower.contains("download") || lower.contains("fetch") || lower.contains("resolving"))) return 1;
+            return *current;
         };
-        auto *dialog = new JobDialog(title, names, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+        QPointer<JobDialog> dialog = new JobDialog(title, names, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
         jobDialog = dialog;
         connect(dialog->close, &QPushButton::clicked, this, [this] { jobFailed = false; refreshActivity(); });
         packageActivityHistory.append(title + " · Running · progress unavailable"); packageJobs.append({title, names, 0, {}, false, false});
-        lastResult = 0;
+        lastResult = 0; jobRunning = true;
         refreshActivity();
-        connect(process, &QProcess::readyRead, this, [process, dialog, stepFor] {
-            const QString text = QString::fromUtf8(process->readAll());
-            dialog->feed(text);
-            dialog->advanceTo(stepFor(text));
-        });
-        connect(process, &QProcess::finished, this, [this, process, dialog, title, names](int code, QProcess::ExitStatus status) {
-            const bool ok = status == QProcess::NormalExit && code == 0;
-            job = nullptr; process->deleteLater();
+        auto watcher = std::make_shared<JobWatcher>(jobFolder());
+        auto output = std::make_shared<QString>();  // The record keeps the whole output even when the window was closed
+        auto *timer = new QTimer(this); jobTimer = timer;
+        connect(timer, &QTimer::timeout, this, [this, timer, watcher, output, dialog, stepFor, title, names] {
+            const int code = watcher->poll();
+            const QString text = watcher->readNew(code != JobWatcher::stillRunning);
+            if (!text.isEmpty()) {
+                if (output->size() < (4 << 20)) output->append(text);
+                if (dialog) { dialog->feed(text); dialog->advanceTo(stepFor(text)); }
+            }
+            if (code == JobWatcher::stillRunning) return;
+            timer->stop(); timer->deleteLater(); jobRunning = false;
+            const bool ok = code == 0;
+            QString lastLines; for (const QString &line : output->split('\n', Qt::SkipEmptyParts).mid(qMax(0, int(output->count('\n')) - 12))) lastLines += line.trimmed() + '\n';
+            if (code < 0 && dialog) dialog->feed("The update stopped without finishing (the computer may have restarted). Run it again.");
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
-            dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
-            if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog->step, dialog->log->toPlainText(), true, ok};
-            if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show();
+            if (dialog) dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
+            if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog ? dialog->step : 0, *output, true, ok};
+            clearJob(jobFolder());
+            if (dialog) { if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show(); }
             if (!ok) jobFailed = true;
             lastResult = ok ? 1 : 2;
             refreshActivity();
+            // A system upgrade replaces the libraries this window is running with, so it restarts instead of reading more files from them.
+            if (ok && inventoryEnabled && title == "System Update" && packageJobsIncludeSystem) { restartAfterUpgrade(); return; }
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
             if (inventoryEnabled && title.startsWith("Update")) QTimer::singleShot(0, this, &Store::checkForUpdates);
-            if (ok && inventoryEnabled && (title == "Update system" || title == "Update all")) { QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); }); }
+            if (ok && inventoryEnabled && title == "System Update") { QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); }); }
         });
-        // setsid: no controlling terminal, so sudo uses the askpass dialog; -w keeps the exit code.
-        process->start("setsid", QStringList{"-w", executable} + arguments);
+        timer->start(200);
         dialog->show();
-        return true;
+    }
+    bool packageJobsIncludeSystem = false;  // The running System Update contains the pacman upgrade
+    void restartAfterUpgrade() {
+        QMessageBox::information(this, "System Update finished", "WoofStore restarts now to load the updated libraries.");
+        settings.setValue("orphansAfterRestart", true);
+        QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");  // pacman replaced the file this process started from
+        if (!QFileInfo(exe).isExecutable()) exe = QStandardPaths::findExecutable("woof-store");
+        QProcess::startDetached("sh", {"-c", "sleep 1.5; exec \"$0\"", exe});
+        QCoreApplication::quit();
+    }
+    // A job started by an earlier run of the store: still running, or finished while the store was closed or crashed.
+    void resumeJob() {
+        const JobInfo info = readJob(jobFolder());
+        if (info.state == JobState::None) return;
+        if (info.state == JobState::Running) { packageJobsIncludeSystem = info.title == "System Update"; watchJob(info.title, info.steps); return; }
+        const bool ok = info.state == JobState::Finished && info.exitCode == 0;
+        const QString log = QString::fromUtf8(readSmallFile(jobFolder() + "/job.log"));
+        packageActivityHistory.append(info.title + (ok ? " · Done" : " · Failed")); packageJobs.append({info.title, info.steps, ok ? int(info.steps.size()) : 0, log, true, ok});
+        clearJob(jobFolder());
+        backend.loadInstalled(); QTimer::singleShot(0, this, &Store::checkForUpdates);
+        auto *box = new QMessageBox(ok ? QMessageBox::Information : QMessageBox::Warning, info.title, ok ? info.title + " finished while WoofStore was closed." :
+            info.state == JobState::Interrupted ? info.title + " was interrupted (the computer may have restarted). Run it again: pacman finishes a half-done upgrade on the next run."
+                                                : info.title + " did not finish. The last lines of its output are in the details.", QMessageBox::Ok, this);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        if (!ok) box->setDetailedText(log.split('\n', Qt::SkipEmptyParts).mid(qMax(0, int(log.count('\n')) - 25)).join('\n'));
+        box->open();
+        if (!ok) { jobFailed = true; lastResult = 2; } else lastResult = 1;
+        refreshActivity();
     }
     // AppStream's origin is not always a remote name ("flatpak"); flatpak would then read it as the app to install.
     static QString flatpakRemote(const QString &origin) {
@@ -624,9 +672,11 @@ protected:
     // The compositor owns the window edge; omit the themed content-top frame.
     void paintEvent(QPaintEvent *) override {}
     void closeEvent(QCloseEvent *event) override {
-        if (busy()) {
+        if (part) {
             showActivity();
-            QMessageBox::information(this, "Package operation active", "Finish the activity before closing the store. Interrupting a package transaction can leave your system partly updated.");
+            QMessageBox::information(this, "Terminal active", "Finish the terminal session before closing the store.");
+            event->ignore();
+        } else if (jobRunning && QMessageBox::question(this, "Operation running", "The package operation keeps running without the store, and a shutdown waits for it. Close WoofStore anyway?\n\nOpen it again to see how it ended.") != QMessageBox::Yes) {
             event->ignore();
         } else QMainWindow::closeEvent(event);
     }
@@ -652,7 +702,7 @@ public:
         dialog->show();
     }
 private:
-    QPushButton *updateAll = nullptr, *systemUpdate = nullptr;
+    QPushButton *systemUpdate = nullptr;
     QSettings settings;
     QWidget *sidebar = nullptr;
     QFrame *sidebarDivider = nullptr;
@@ -757,9 +807,10 @@ public:
     QTime lastUpdateCheck;
 private:
     QPointer<KParts::ReadOnlyPart> part;
-    QPointer<QProcess> job;  // A package operation running in the background, shown by jobDialog
+    bool jobRunning = false;  // A package operation outside the store (jobrunner.h), shown by jobDialog
+    QPointer<QTimer> jobTimer;
     QPointer<JobDialog> jobDialog;
-    bool busy() const { return part || job; }
+    bool busy() const { return part || jobRunning; }
     bool jobFailed = false;
     int lastResult = 0;  // Shown on the Activity button until the Activity window is opened
     QHash<QString, int> appIndex;  // CatalogApp::key to index in backend.apps
@@ -881,9 +932,6 @@ private:
         updatesPanel = new QWidget; updatesPanel->setObjectName("updateResults");
         updatesRows = new QVBoxLayout(updatesPanel); updatesRows->setContentsMargins(0, 0, 0, 0); updatesRows->setSpacing(16);
         content->addWidget(updatesPanel); content->addStretch();
-        updateAll = new QPushButton(lucideIcon("refresh", 20), "Update all"); updateAll->setObjectName("updateAll");
-        updateAll->setMinimumHeight(44); updateAll->setCursor(Qt::PointingHandCursor);
-        updateAll->setToolTip("Update every app and package in the list");
         // The system update takes the accent colour while there is something for it to do; a disabled button stays grey.
         systemUpdate = new QPushButton(lucideIcon("package", 20, palette().color(QPalette::HighlightedText)), "System Update"); systemUpdate->setObjectName("systemUpdate");
         systemUpdate->setMinimumHeight(44); systemUpdate->setCursor(Qt::PointingHandCursor);
@@ -891,11 +939,10 @@ private:
                                     "QPushButton#systemUpdate[pending=true]:hover { border: 1px solid palette(highlighted-text); }"
                                     "QPushButton#systemUpdate[pending=true]:focus { border: 2px solid palette(highlighted-text); }");
         auto *actions = new QWidget; auto *actionsLayout = new QVBoxLayout(actions); actionsLayout->setContentsMargins(0, 0, 0, 0); actionsLayout->setSpacing(8);
-        actionsLayout->addWidget(updateAll); actionsLayout->addWidget(systemUpdate);
+        actionsLayout->addWidget(systemUpdate);
         new StickyFooter(static_cast<QScrollArea *>(pages->widget(pages->count() - 1)), content, actions);
         connect(checkUpdates, &QPushButton::clicked, this, &Store::checkForUpdates);
-        connect(updateAll, &QPushButton::clicked, this, [this] { runUpdates(true); });
-        connect(systemUpdate, &QPushButton::clicked, this, [this] { runUpdates(false); });
+        connect(systemUpdate, &QPushButton::clicked, this, [this] { runUpdates(); });
         refreshUpdates();
     }
 
@@ -930,7 +977,8 @@ private:
         return choice;
     }
 
-    void runUpdates(bool all) {
+    // One button updates everything: the system first (a full pacman -Syu), then the AUR, Flatpak and AppImages. Nothing runs after a failed system upgrade.
+    void runUpdates() {
         int arch = 0, aur = 0, flatpaks = 0; QList<UpdateEntry> images;
         for (const auto &entry : pendingUpdates) {
             if (entry.source == "Arch") ++arch; else if (entry.source == "AUR") ++aur;
@@ -938,17 +986,16 @@ private:
         }
         auto count = [](int n, const QString &one, const QString &many) { return QString("%1 %2").arg(n).arg(n == 1 ? one : many); };
         QStringList lines;
-        if (arch) lines << "• " + count(arch, "repository package", "repository packages") + ": a full system upgrade (pacman -Syu)";
+        lines << (arch ? "• " + count(arch, "repository package", "repository packages") + ": a full system upgrade (pacman -Syu)" : "• The system: syncs the package databases and upgrades anything new (pacman -Syu)");
         if (aur) lines << "• " + count(aur, "AUR package", "AUR packages");
-        if (all && flatpaks) lines << "• " + count(flatpaks, "Flatpak app", "Flatpak apps");
-        if (all && !images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
-        if (!all && !arch) lines << "• Nothing is listed as outdated. This still syncs the package databases (pacman -Syu) and lists orphan packages.";
-        const QString title = all ? "Update all" : "Update system";
-        const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated.", aur);
+        if (flatpaks) lines << "• " + count(flatpaks, "Flatpak app", "Flatpak apps");
+        if (!images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
+        lines << "• Orphan packages are listed afterwards, never removed without asking";
+        const QString title = "System Update";
+        const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated. "
+                                             "The update keeps running if you close WoofStore.", aur);
         if (!choice.ok) return;
-        const bool aurStep = (aur > 0 && choice.aur) || choice.devel;
-        if (all && arch == 0 && !aurStep && !flatpaks && images.isEmpty()) return;
-        runUpdateScript(title, !all || arch > 0, aurStep, choice.devel, all && flatpaks > 0, all ? images : QList<UpdateEntry>{});
+        runUpdateScript(title, true, (aur > 0 && choice.aur) || choice.devel, choice.devel, flatpaks > 0, images);
     }
 
     void runUpdateOne(const UpdateEntry &entry) {
@@ -965,7 +1012,11 @@ private:
             for (int i = 0; i < names.size(); ++i) if (text.contains("==> " + names[i])) *current = i;
             return *current;
         };
-        startJob(title, "bash", QStringList{"-c", script, "woof-store-update", QCoreApplication::applicationFilePath()} + items, {}, names, stepOf);
+        // pacman may replace this program during the upgrade, and Linux then reports its path with " (deleted)" appended.
+        QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");
+        if (!QFileInfo(exe).isExecutable()) exe = QStandardPaths::findExecutable("woof-store");
+        packageJobsIncludeSystem = system;
+        if (!startJob(title, "bash", QStringList{"-c", script, "woof-store-update", exe} + items, {}, names, stepOf)) packageJobsIncludeSystem = false;
     }
 
     // A link from the desktop ("appstream://org.mozilla.firefox", which KRunner and web pages use for "Install this app") or a plain name.
@@ -1182,9 +1233,9 @@ private:
         updateStatus->setText(updateChecking ? "Checking…" : updatesChecked ? "Checked at " + lastUpdateCheck.toString("HH:mm") : QString());
         const bool listed = !pendingUpdates.isEmpty();
         int systemCount = 0; for (const auto &entry : pendingUpdates) if (entry.source == "Arch" || entry.source == "AUR") ++systemCount;
-        updatesPanel->setVisible(listed); updatesEmpty->setVisible(!listed); updateAll->setVisible(listed); systemUpdate->setVisible(true);
+        updatesPanel->setVisible(listed); updatesEmpty->setVisible(!listed); systemUpdate->setVisible(true);
         systemUpdate->setProperty("pending", systemCount > 0); systemUpdate->setIcon(lucideIcon("package", 20, palette().color(systemCount > 0 ? QPalette::HighlightedText : QPalette::WindowText))); systemUpdate->style()->unpolish(systemUpdate); systemUpdate->style()->polish(systemUpdate);
-        systemUpdate->setToolTip(systemCount > 0 ? "Update the Arch and AUR packages together, as a full system upgrade" : "Sync the package databases, update, and list orphan packages");
+        systemUpdate->setToolTip("Update the system, AUR packages, Flatpak apps and AppImages in one run, then list orphan packages");
         // Red when the system itself is behind, the accent colour when only apps are.
         auto *updatesNav = static_cast<NavButton *>(navigation->button(2));
         updatesNav->badge = int(pendingUpdates.size()); updatesNav->badgeColor = systemCount > 0 ? QColor("#da4453") : palette().color(QPalette::Highlight); updatesNav->update();
@@ -1452,7 +1503,7 @@ int main(int argc, char **argv) {
         p.setColor(group, QPalette::PlaceholderText, p.color(group, QPalette::Text));
     application.setPalette(p);
     QTemporaryDir sidebarCheckConfig;
-    if (parser.isSet("prototype-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check")) qputenv("XDG_CONFIG_HOME", sidebarCheckConfig.path().toUtf8());
+    if (parser.isSet("prototype-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check")) { qputenv("XDG_CONFIG_HOME", sidebarCheckConfig.path().toUtf8()); qputenv("XDG_DATA_HOME", (sidebarCheckConfig.path() + "/data").toUtf8()); }
     // One window per user: a second start (a KRunner suggestion, a link, the menu) hands its request to the running one.
     const bool interactive = !(parser.isSet("screenshot") || parser.isSet("prototype-check") || parser.isSet("activity-preview") || parser.isSet("updates-preview") || parser.isSet("installed-preview") || parser.isSet("terminal-check") || parser.isSet("sidebar-check") || parser.isSet("explore-check") || parser.isSet("terminal-demo") || parser.isSet("orphans-preview"));
     const QString request = parser.positionalArguments().value(0);
@@ -1505,11 +1556,11 @@ int main(int argc, char **argv) {
         passed &= page->loadMore->isHidden();  // The fixture fits in one page
         store.previewUpdates("available");
         passed &= !store.findChild<QWidget *>("updateResults")->isHidden() && store.findChild<QWidget *>("updatesEmpty")->isHidden()
-            && store.findChildren<QPushButton *>("updateOne").size() == 3 && store.findChild<QPushButton *>("updateAll")->isVisible() && store.findChild<QFrame *>("systemUpdates");
+            && store.findChildren<QPushButton *>("updateOne").size() == 3 && !store.findChild<QPushButton *>("updateAll") && store.findChild<QPushButton *>("systemUpdate")->isVisible() && store.findChild<QFrame *>("systemUpdates");
         auto *updatesNav = static_cast<NavButton *>(store.findChild<QAbstractButton *>("navUpdates"));
         passed &= store.findChild<QPushButton *>("systemUpdate")->property("pending").toBool() && updatesNav->badge == 6 && updatesNav->badgeColor == QColor("#da4453");
         store.previewUpdates("apps");
-        passed &= !store.findChild<QPushButton *>("systemUpdate")->property("pending").toBool() && store.findChild<QPushButton *>("systemUpdate")->isVisible() && store.findChild<QPushButton *>("updateAll")->isEnabled() && updatesNav->badge == 3 && updatesNav->badgeColor == store.palette().color(QPalette::Highlight);
+        passed &= !store.findChild<QPushButton *>("systemUpdate")->property("pending").toBool() && store.findChild<QPushButton *>("systemUpdate")->isVisible() && !store.findChild<QPushButton *>("updateAll") && updatesNav->badge == 3 && updatesNav->badgeColor == store.palette().color(QPalette::Highlight);
         {   // The orphan window: a stand-in pacman lists two orphans
             QTemporaryDir bin; QFile stub(bin.path() + "/pacman"); passed &= stub.open(QIODevice::WriteOnly); stub.write("#!/bin/sh\nprintf 'libfoo\\nbar-git\\n'\n"); stub.close(); stub.setPermissions(stub.permissions() | QFile::ExeOwner);
             const QByteArray oldPath = qgetenv("PATH"); qputenv("PATH", bin.path().toUtf8() + ":" + oldPath);
@@ -1566,7 +1617,7 @@ int main(int argc, char **argv) {
         store.findChild<QDialog *>("activityPopup")->close();
         QTimer::singleShot(2300, &store, [&application, &store, details, passed] {
             bool result = passed && details->install->isEnabled() && details->install->text() == "Open"
-                && store.findChild<QPushButton *>("updateAll")->isEnabled();
+                && !store.findChild<QPushButton *>("updateAll");
             auto *clear = store.findChild<QPushButton *>("clearActivity");
             result &= clear->isEnabled(); clear->click();
             result &= !clear->isEnabled() && store.findChild<QListWidget *>("activityHistory")->count() == 0
@@ -1849,6 +1900,18 @@ int main(int argc, char **argv) {
         passed &= page->isVisible();
         page->openPreview(fixtureApp(store.backend, "Krita"));
         store.selectPage(0); settle();
+        {   // Closing the progress window while the job runs only hides it: the job still writes there (deleting it crashed the store)
+            const auto before = store.packageJobs.size();
+            store.startJob("Close test", "bash", {"-c", "sleep 1; echo '==> Finished step'; exit 0"}, {}, {"A", "B"});
+            QPointer<JobDialog> early = static_cast<JobDialog *>(store.findChild<QDialog *>("jobDialog"));
+            if (early) { early->QDialog::close(); QEventLoop nested; QTimer::singleShot(300, &nested, &QEventLoop::quit); nested.exec(); }  // A nested loop delivers deferred deletes
+            passed &= early && !early->isVisible();
+            QElapsedTimer ended; ended.start();
+            while ((store.packageJobs.size() == before || !store.packageJobs.last().finished) && ended.elapsed() < 10000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+            passed &= store.packageJobs.size() == before + 1 && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Finished step") && early;
+            ended.restart();
+            while (store.findChild<QDialog *>("jobDialog") && ended.elapsed() < 4000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
         {   // A background job reports steps and output without a terminal
             store.startJob("Job test", "bash", {"-c", "echo '==> Making package'; echo 'Installing 50%'; exit 0"}, {}, {"A", "B", "C"}, [](const QString &text) { return text.contains("Making package") ? 2 : 0; });
             auto *jobView = static_cast<JobDialog *>(store.findChild<QDialog *>("jobDialog"));

@@ -10,6 +10,8 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include "backend.h"
+#include "jobrunner.h"
+#include <QElapsedTimer>
 #include "catalog.h"
 #include "merge.h"
 #include "review.h"
@@ -390,6 +392,40 @@ int main(int argc, char **argv) {
     {
         const auto orphans = parseOrphans("libfoo\t1.2 MiB\nbar-git\n\n$(rm -rf x)\t3 MiB\n");
         assert(orphans.size() == 2 && orphans[0].name == "libfoo" && orphans[0].size == "1.2 MiB" && orphans[1].name == "bar-git" && orphans[1].size.isEmpty());
+    }
+    {   // A job runs outside the store: own session, output in a file, exit code written last
+        QTemporaryDir dir; const QString job = dir.path() + "/job";
+        QString error;
+        assert(readJob(job).state == JobState::None);
+        assert(launchJob(job, "Test job", {"A", "B"}, "sh", {"-c", "echo out; echo err >&2; readlink /proc/$$/fd/1; ps -o sid= -p $$ | tr -d ' '; sleep 1; exit 3"}, QProcessEnvironment::systemEnvironment(), {}, &error));
+        JobWatcher watcher(job);
+        QElapsedTimer waited; waited.start();
+        while (watcher.poll() == JobWatcher::stillRunning && waited.elapsed() < 15000) QThread::msleep(50);
+        assert(watcher.poll() == 3);
+        const JobInfo done = readJob(job);
+        const QString log = QString::fromUtf8(readSmallFile(job + "/job.log"));
+        assert(done.state == JobState::Finished && done.exitCode == 3 && done.title == "Test job" && done.steps == QStringList({"A", "B"}));
+        assert(log.contains("out\n") && log.contains("err\n") && log.contains(job + "/job.log"));  // stdout is the file, not a pipe the store could close
+        const QString sid = log.trimmed().split('\n').last();
+        QProcess mine; mine.start("ps", {"-o", "sid=", "-p", QString::number(QCoreApplication::applicationPid())}); mine.waitForFinished(3000);
+        assert(!sid.isEmpty() && sid != QString::fromUtf8(mine.readAllStandardOutput()).trimmed());  // Its own session: closing the store sends it no hangup
+        assert(watcher.readNew().contains("out") && watcher.readNew().isEmpty());
+        clearJob(job);
+        assert(readJob(job).state == JobState::None);
+        // While it runs it is Running, and output is handed over in whole lines only
+        assert(launchJob(job, "Slow", {"A"}, "sh", {"-c", "printf 'first\\nsec'; sleep 2; echo ond"}, QProcessEnvironment::systemEnvironment(), {}, &error));
+        JobWatcher slow(job);
+        QThread::msleep(700);
+        assert(readJob(job).state == JobState::Running && slow.poll() == JobWatcher::stillRunning && slow.readNew() == "first\n");
+        waited.restart();
+        while (slow.poll() == JobWatcher::stillRunning && waited.elapsed() < 15000) QThread::msleep(50);
+        assert(slow.poll() == 0 && slow.readNew(true) == "second\n");
+        clearJob(job);
+        // A job whose runner died without writing an exit code (power loss) is reported as interrupted, not as running
+        QDir().mkpath(job);
+        { QFile meta(job + "/job.json"); assert(meta.open(QIODevice::WriteOnly)); meta.write("{\"title\":\"Gone\",\"steps\":[]}"); }
+        { QFile pid(job + "/job.pid"); assert(pid.open(QIODevice::WriteOnly)); pid.write("999999\n"); }
+        assert(readJob(job).state == JobState::Interrupted && JobWatcher(job).poll() == -1);
     }
     std::puts("Installed and updates checks: PASS");
 }
