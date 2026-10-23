@@ -492,6 +492,7 @@ public:
             if (dialog) dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
             if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog ? dialog->step : 0, *output, true, ok};
             clearJob(jobFolder());
+            if (ok && title == "System Update") settings.setValue("lastSystemUpdate", QDate::currentDate().toString(Qt::ISODate));
             if (dialog) { if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show(); }
             if (!ok) jobFailed = true;
             lastResult = ok ? 1 : 2;
@@ -992,7 +993,13 @@ private:
         if (!images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
         lines << "• Orphan packages are listed afterwards, never removed without asking";
         const QString title = "System Update";
-        const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated. "
+        // Important news (manual interventions) published since the last System Update: read them before the upgrade, not after it breaks.
+        QStringList headlines;
+        const QDate since = QDate::fromString(settings.value("lastSystemUpdate").toString(), Qt::ISODate);
+        const QDate from = since.isValid() ? since : QDate::currentDate().addDays(-14);
+        for (const auto &item : news) if (item.important && item.date.isValid() && item.date.date() >= from && headlines.size() < 3) headlines << "• " + item.source + ": " + item.title;
+        const QString newsNote = headlines.isEmpty() ? QString() : "\n\nNews since your last update:\n" + headlines.join('\n') + "\nOpen the News page to read it before you continue.";
+        const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + newsNote + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated. "
                                              "The update keeps running if you close WoofStore.", aur);
         if (!choice.ok) return;
         runUpdateScript(title, true, (aur > 0 && choice.aur) || choice.devel, choice.devel, flatpaks > 0, images);
@@ -1003,7 +1010,8 @@ private:
         else runUpdateScript("Update " + entry.name, false, false, false, false, {entry});
     }
 
-    void runUpdateScript(const QString &title, bool system, bool aur, bool devel, bool flatpak, const QList<UpdateEntry> &images) {
+public:
+    void runUpdateScript(const QString &title, bool system, bool aur, bool devel, bool flatpak, const QList<UpdateEntry> &images, const QString &importer = {}) {
         QStringList names, items;
         const QString script = updateScript(system, aur, devel, flatpak, !images.isEmpty(), &names);
         for (const auto &entry : images) items << entry.id + '\t' + entry.url + '\t' + entry.name;
@@ -1015,9 +1023,11 @@ private:
         // pacman may replace this program during the upgrade, and Linux then reports its path with " (deleted)" appended.
         QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");
         if (!QFileInfo(exe).isExecutable()) exe = QStandardPaths::findExecutable("woof-store");
+        if (!importer.isEmpty()) exe = importer;  // Tests use a stand-in that only records its arguments
         packageJobsIncludeSystem = system;
         if (!startJob(title, "bash", QStringList{"-c", script, "woof-store-update", exe} + items, {}, names, stepOf)) packageJobsIncludeSystem = false;
     }
+private:
 
     // A link from the desktop ("appstream://org.mozilla.firefox", which KRunner and web pages use for "Install this app") or a plain name.
     // Known apps open on their details page; anything else becomes an Explore search.
@@ -1911,6 +1921,67 @@ int main(int argc, char **argv) {
             passed &= store.packageJobs.size() == before + 1 && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Finished step") && early;
             ended.restart();
             while (store.findChild<QDialog *>("jobDialog") && ended.elapsed() < 4000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+        {   // The whole System Update run with stand-ins for pkexec, paru, flatpak and curl, through the same window, runner and record
+            auto check = [&](int line, bool ok) { if (!ok) fprintf(stderr, "update check failed at main.cpp:%d\n", line); passed &= ok; };
+            QTemporaryDir bin, data; const QString log = bin.path() + "/calls";
+            auto stub = [&](const QString &name, const QString &body) { QFile f(bin.path() + "/" + name); check(__LINE__, f.open(QIODevice::WriteOnly)); f.write("#!/bin/sh\n" + body.toUtf8()); f.close(); f.setPermissions(f.permissions() | QFile::ExeOwner); };
+            stub("pkexec", "echo \"pkexec $*\" >> \"$LOG\"; exit ${FAIL_PACMAN:-0}\n");
+            stub("paru", "echo \"paru $*\" >> \"$LOG\"; exit ${FAIL_PARU:-0}\n");
+            stub("flatpak", "echo \"flatpak $*\" >> \"$LOG\"\n");
+            stub("pacman", "echo \"pacman $*\" >> \"$LOG\"\n");
+            stub("woof-store", "echo \"import $*\" >> \"$LOG\"\n");
+            stub("curl", "for last; do :; done; echo \"curl $*\" >> \"$LOG\"; : > \"$3\"\n");
+            const QByteArray oldPath = qgetenv("PATH"); qputenv("PATH", bin.path().toUtf8() + ":" + oldPath); qputenv("LOG", log.toUtf8());
+            const UpdateEntry image{"abc", "Foo", {}, "2", "AppImage", "https://example.invalid/Foo.AppImage"};
+            auto runAll = [&] {
+                QFile::remove(log);
+                const auto before = store.packageJobs.size();
+                store.runUpdateScript("System Update", true, true, false, true, {image}, bin.path() + "/woof-store");
+                QElapsedTimer limit; limit.start();
+                while ((store.packageJobs.size() == before || !store.packageJobs.last().finished) && limit.elapsed() < 20000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+                limit.restart(); while (store.findChild<QDialog *>("jobDialog") && limit.elapsed() < 3000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+                QFile calls(log); const QString text = calls.open(QIODevice::ReadOnly) ? QString::fromUtf8(calls.readAll()) : QString();
+                return QPair<bool, QString>(store.packageJobs.size() == before + 1 && store.packageJobs.last().ok, text);
+            };
+            auto ran = runAll();  // Everything works: the four steps run in order, then the orphan report
+            const QString joined = store.packageJobs.last().log;
+            check(__LINE__, ran.first && ran.second.indexOf("pkexec pacman -Syu --noconfirm") >= 0 && ran.second.indexOf("pkexec pacman -Syu") < ran.second.indexOf("paru -Sua --noconfirm --skipreview")
+                && ran.second.indexOf("paru") < ran.second.indexOf("flatpak update -y --noninteractive") && ran.second.indexOf("flatpak") < ran.second.indexOf("curl") && ran.second.contains("import --import-appimage")
+                && joined.indexOf("==> System packages") < joined.indexOf("==> AUR packages") && joined.indexOf("==> AUR packages") < joined.indexOf("==> Flatpak apps")
+                && joined.indexOf("==> Flatpak apps") < joined.indexOf("==> AppImages") && joined.contains("==> Orphan packages") && store.packageJobs.last().step == 5);
+            check(__LINE__, !QFileInfo::exists(Store::jobFolder() + "/job.json"));  // A finished job leaves nothing behind
+            qputenv("FAIL_PACMAN", "1");  // A failed system upgrade stops everything and says so
+            auto stopped = runAll();
+            check(__LINE__, !stopped.first && stopped.second == "pkexec pacman -Syu --noconfirm\n" && store.packageJobs.last().log.contains("nothing else was updated"));
+            qunsetenv("FAIL_PACMAN"); qputenv("FAIL_PARU", "1");  // A failed AUR step is reported, the rest still runs, the run ends as failed
+            auto partial = runAll();
+            check(__LINE__, !partial.first && partial.second.contains("flatpak update") && partial.second.contains("import --import-appimage") && store.packageJobs.last().log.contains("The AUR update failed"));
+            qunsetenv("FAIL_PARU");
+            // The store was closed or crashed: a finished, an interrupted and a still running job are all found again
+            QString error; const QString folder = Store::jobFolder();
+            check(__LINE__, launchJob(folder, "System Update", {"System packages", "Orphan packages"}, "sh", {"-c", "echo '==> System packages'; exit 0"}, QProcessEnvironment::systemEnvironment(), {}, &error));
+            JobWatcher finished(folder);
+            { QElapsedTimer t; t.start(); while (finished.poll() == JobWatcher::stillRunning && t.elapsed() < 10000) QThread::msleep(30); }
+            auto recordsBefore = store.packageJobs.size();
+            store.resumeJob();
+            check(__LINE__, store.packageJobs.size() == recordsBefore + 1 && store.packageJobs.last().ok && store.packageJobs.last().title == "System Update" && store.packageJobs.last().log.contains("System packages") && !QFileInfo::exists(folder + "/job.json"));
+            for (auto *box : store.findChildren<QMessageBox *>()) box->close();
+            for (auto *old : store.findChildren<QDialog *>("jobDialog")) old->close();  // Windows of the failed runs above stay open until read
+            { QEventLoop nested; QTimer::singleShot(200, &nested, &QEventLoop::quit); nested.exec(); }
+            QDir().mkpath(folder); { QFile meta(folder + "/job.json"); check(__LINE__, meta.open(QIODevice::WriteOnly)); meta.write("{\"title\":\"System Update\",\"steps\":[\"A\"]}"); } { QFile pid(folder + "/job.pid"); check(__LINE__, pid.open(QIODevice::WriteOnly)); pid.write("999999\n"); }
+            recordsBefore = store.packageJobs.size();
+            store.resumeJob();  // The runner is gone and left no exit code: reported as interrupted, not as running
+            check(__LINE__, store.packageJobs.size() == recordsBefore + 1 && !store.packageJobs.last().ok && !store.findChild<QDialog *>("jobDialog"));
+            for (auto *box : store.findChildren<QMessageBox *>()) box->close();
+            check(__LINE__, launchJob(folder, "System Update", {"System packages", "Orphan packages"}, "sh", {"-c", "echo '==> System packages'; sleep 1; echo '==> Orphan packages'; exit 0"}, QProcessEnvironment::systemEnvironment(), {}, &error));
+            recordsBefore = store.packageJobs.size();
+            store.resumeJob();  // Still running: the window comes back and follows it to the end
+            check(__LINE__, store.findChild<QDialog *>("jobDialog") != nullptr);
+            { QElapsedTimer t; t.start(); while ((store.packageJobs.size() == recordsBefore || !store.packageJobs.last().finished) && t.elapsed() < 15000) QApplication::processEvents(QEventLoop::AllEvents, 50); }
+            check(__LINE__, store.packageJobs.size() == recordsBefore + 1 && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Orphan packages") && store.packageJobs.last().step == 2);
+            { QElapsedTimer t; t.start(); while (store.findChild<QDialog *>("jobDialog") && t.elapsed() < 3000) QApplication::processEvents(QEventLoop::AllEvents, 50); }
+            qputenv("PATH", oldPath); qunsetenv("LOG");
         }
         {   // A background job reports steps and output without a terminal
             store.startJob("Job test", "bash", {"-c", "echo '==> Making package'; echo 'Installing 50%'; exit 0"}, {}, {"A", "B", "C"}, [](const QString &text) { return text.contains("Making package") ? 2 : 0; });

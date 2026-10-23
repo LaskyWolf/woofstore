@@ -1,6 +1,8 @@
 #pragma once
 #include <QDir>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -42,7 +44,9 @@ inline JobInfo readJob(const QString &dir) {
     for (const auto &name : meta.value("steps").toArray()) info.steps << name.toString();
     const QByteArray exitCode = readSmallFile(dir + "/job.exit").trimmed();
     if (!exitCode.isEmpty()) { info.state = JobState::Finished; info.exitCode = exitCode.toInt(); }
-    else info.state = runnerAlive(dir) ? JobState::Running : JobState::Interrupted;
+    else if (runnerAlive(dir)) info.state = JobState::Running;
+    else if (!QFile::exists(dir + "/job.pid") && QFileInfo(dir + "/job.json").lastModified().secsTo(QDateTime::currentDateTime()) < 5) info.state = JobState::Running;  // Just launched: the runner has not written its pid yet
+    else info.state = JobState::Interrupted;
     return info;
 }
 

@@ -29,6 +29,11 @@ static void await(QEventLoop &loop, bool &done, int milliseconds = 3000) {
 
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
+    if (argc == 3 && QString(argv[1]) == "--crash-after-launch") {  // Stand-in for a store that dies right after starting an update
+        QString error;
+        launchJob(argv[2], "Crash test", {"A"}, "sh", {"-c", "sleep 1; echo survived; exit 0"}, QProcessEnvironment::systemEnvironment(), {}, &error);
+        std::abort();
+    }
     assert(validPackageName("visual-studio-code-bin"));
     assert(validPackageName("libfoo++"));
     for (const QString &name : {"--help", "../package", "foo;touch /tmp/x", "foo\nbar", "", "$(id)"}) assert(!validPackageName(name));
@@ -426,6 +431,15 @@ int main(int argc, char **argv) {
         { QFile meta(job + "/job.json"); assert(meta.open(QIODevice::WriteOnly)); meta.write("{\"title\":\"Gone\",\"steps\":[]}"); }
         { QFile pid(job + "/job.pid"); assert(pid.open(QIODevice::WriteOnly)); pid.write("999999\n"); }
         assert(readJob(job).state == JobState::Interrupted && JobWatcher(job).poll() == -1);
+    }
+    {   // The store dies (SIGABRT) right after starting a job: the job still finishes and its output is kept
+        QTemporaryDir dir; const QString job = dir.path() + "/job";
+        QProcess crashing; crashing.start(QCoreApplication::applicationFilePath(), {"--crash-after-launch", job}); crashing.waitForFinished(10000);
+        assert(crashing.exitStatus() == QProcess::CrashExit);
+        JobWatcher watcher(job);
+        QElapsedTimer waited; waited.start();
+        while (watcher.poll() == JobWatcher::stillRunning && waited.elapsed() < 15000) QThread::msleep(50);
+        assert(watcher.poll() == 0 && watcher.readNew(true).contains("survived") && readJob(job).state == JobState::Finished);
     }
     std::puts("Installed and updates checks: PASS");
 }
