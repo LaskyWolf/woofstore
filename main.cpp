@@ -1958,11 +1958,13 @@ int main(int argc, char **argv) {
             auto check = [&](int line, bool ok) { if (!ok) fprintf(stderr, "update check failed at main.cpp:%d\n", line); passed &= ok; };
             QTemporaryDir bin, data; const QString log = bin.path() + "/calls";
             auto stub = [&](const QString &name, const QString &body) { QFile f(bin.path() + "/" + name); check(__LINE__, f.open(QIODevice::WriteOnly)); f.write("#!/bin/sh\n" + body.toUtf8()); f.close(); f.setPermissions(f.permissions() | QFile::ExeOwner); };
-            stub("pkexec", "echo \"pkexec $*\" >> \"$LOG\"; exit ${FAIL_PACMAN:-0}\n");
+            stub("pkexec", "echo \"pkexec $1\" >> \"$LOG\"; exec \"$@\"\n");
+            stub("pacman", "echo \"pacman $*\" >> \"$LOG\"; [ \"$1\" = -Syu ] && exit ${FAIL_PACMAN:-0}; exit 0\n");
+            stub("paccache", "echo \"paccache $*\" >> \"$LOG\"\n");
+            stub("checkservices", "echo \"checkservices $*\" >> \"$LOG\"; echo \"Service 'bluetooth.service' needs a restart\"\n");
             stub("paru", "echo \"paru $*\" >> \"$LOG\"; exit ${FAIL_PARU:-0}\n");
             stub("flatpak", "echo \"flatpak $*\" >> \"$LOG\"\n");
-            stub("pacman", "echo \"pacman $*\" >> \"$LOG\"\n");
-            stub("woof-store", "echo \"import $*\" >> \"$LOG\"\n");
+                        stub("woof-store", "echo \"import $*\" >> \"$LOG\"\n");
             stub("curl", "for last; do :; done; echo \"curl $*\" >> \"$LOG\"; : > \"$3\"\n");
             const QByteArray oldPath = qgetenv("PATH"); qputenv("PATH", bin.path().toUtf8() + ":" + oldPath); qputenv("LOG", log.toUtf8());
             const UpdateEntry image{"abc", "Foo", {}, "2", "AppImage", "https://example.invalid/Foo.AppImage"};
@@ -1978,14 +1980,14 @@ int main(int argc, char **argv) {
             };
             auto ran = runAll();  // Everything works: the four steps run in order, then the orphan report
             const QString joined = store.packageJobs.last().log;
-            check(__LINE__, ran.first && ran.second.indexOf("pkexec pacman -Syu --noconfirm") >= 0 && ran.second.indexOf("pkexec pacman -Syu") < ran.second.indexOf("paru -Sua --noconfirm --skipreview")
+            check(__LINE__, ran.first && ran.second.indexOf("pacman -Syu --noconfirm") >= 0 && ran.second.indexOf("pacman -Syu") < ran.second.indexOf("paccache -rk3") && ran.second.indexOf("paccache") < ran.second.indexOf("paru -Sua --noconfirm --skipreview") && ran.second.count("pkexec") == 1
                 && ran.second.indexOf("paru") < ran.second.indexOf("flatpak update -y --noninteractive") && ran.second.indexOf("flatpak") < ran.second.indexOf("curl") && ran.second.contains("import --import-appimage")
                 && joined.indexOf("==> System packages") < joined.indexOf("==> AUR packages") && joined.indexOf("==> AUR packages") < joined.indexOf("==> Flatpak apps")
-                && joined.indexOf("==> Flatpak apps") < joined.indexOf("==> AppImages") && joined.contains("==> Orphan packages") && joined.indexOf("==> Orphan packages") < joined.indexOf("==> Cache and services") && store.packageJobs.last().step == 6);
+                && joined.indexOf("==> Flatpak apps") < joined.indexOf("==> AppImages") && joined.contains("==> Orphan packages") && joined.indexOf("==> System packages") < joined.indexOf("==> Cache and services") && joined.indexOf("==> Cache and services") < joined.indexOf("==> AUR packages") && store.packageJobs.last().step == 6);
             check(__LINE__, !QFileInfo::exists(Store::jobFolder() + "/job.json"));  // A finished job leaves nothing behind
             qputenv("FAIL_PACMAN", "1");  // A failed system upgrade stops everything and says so
             auto stopped = runAll();
-            check(__LINE__, !stopped.first && stopped.second == "pkexec pacman -Syu --noconfirm\n" && store.packageJobs.last().log.contains("nothing else was updated"));
+            check(__LINE__, !stopped.first && stopped.second == "pkexec bash\npacman -Syu --noconfirm\n" && store.packageJobs.last().log.contains("nothing else was updated"));
             qunsetenv("FAIL_PACMAN"); qputenv("FAIL_PARU", "1");  // A failed AUR step is reported, the rest still runs, the run ends as failed
             auto partial = runAll();
             check(__LINE__, !partial.first && partial.second.contains("flatpak update") && partial.second.contains("import --import-appimage") && store.packageJobs.last().log.contains("The AUR update failed"));

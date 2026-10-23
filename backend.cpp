@@ -264,8 +264,12 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
     QStringList names; QString script = "fail=0\nexe=\"$1\"; shift\n";
     auto section = [&](const QString &name) { names << name; script += "echo '==> " + name + "'\n"; };
     if (system) {
+        // One root session for the upgrade and what follows it, so the password is asked once. If it does not run to the pacman step the whole
+        // run stops; a problem in the cleanup after the upgrade is only reported, the packages are already updated.
         section("System packages");
-        script += "pkexec pacman -Syu --noconfirm || { echo '==> The system upgrade failed, so nothing else was updated.'; exit 1; }\n";
+        names << "Cache and services";
+        script += "root=$(cat <<'EOS'\npacman -Syu --noconfirm || exit 1\necho '==> Cache and services'\n" + postUpgradeScript() + "EOS\n)\n"
+                  "pkexec bash -c \"$root\" || { echo '==> The system upgrade failed, so nothing else was updated.'; exit 1; }\n";
     }
     if (aur) {
         section("AUR packages");
@@ -288,13 +292,6 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
     if (system) {
         section("Orphan packages");  // Only reported: removing them is the user's call
         script += "orphans=$(pacman -Qdtq 2>/dev/null); if [ -n \"$orphans\" ]; then echo 'Orphan packages (nothing needs them any more):'; echo \"$orphans\"; echo 'Remove them with: sudo pacman -Rns $(pacman -Qdtq)'; else echo 'No orphan packages.'; fi\n";
-    }
-    if (system) {
-        section("Cache and services");
-        // One root session for both jobs, so the password is asked once more, not twice. A failure here is reported but does not fail the run:
-        // the packages are already updated.
-        script += "post=$(cat <<'EOS'\n" + postUpgradeScript() + "EOS\n)\n"
-                  "pkexec bash -c \"$post\" || echo '==> The cache cleanup and the service check were skipped.'\n";
     }
     script += "exit $fail\n";
     if (stepNames) *stepNames = names;
