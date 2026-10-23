@@ -373,6 +373,7 @@ inline SourceStyle sourceStyle(const QString &source) {
     if (source == "Arch") return {QColor("#1c9fb4"), "arch"};
     if (source == "AUR" || source == "AUR / local") return {QColor("#e5a50a"), "aur"};
     if (source == "AppImage") return {QColor("#9141ac"), "app-window"};
+    if (source == "WoofStore") return {QColor("#26a269"), "sparkle"};  // The store itself, updated from its GitHub releases
     return {QColor("#6c757d"), "grid"};
 }
 class SourceBadge : public QWidget {

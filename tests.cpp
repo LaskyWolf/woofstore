@@ -320,6 +320,13 @@ int main(int argc, char **argv) {
         const auto tagged = parseFeed("<rss><channel><item><title>A story</title><link>https://x.org/a</link><category>Security</category></item></channel></rss>", "9to5Linux", false);
         assert(tagged.size() == 1 && tagged[0].topics == QStringList{"Security"});
     }
+    {   // GitHub's latest release against the running version
+        auto release = [](const char *tag) { return QByteArray(R"({"tag_name":")") + tag + R"("})"; };
+        const auto newer = parseSelfUpdate(release("v1.2.0"), "1.1.0");
+        assert(newer && newer->to == "1.2.0" && newer->from == "1.1.0" && newer->source == "WoofStore" && newer->url == "https://github.com/LaskyWolf/woofstore/archive/refs/tags/v1.2.0.tar.gz");
+        assert(!parseSelfUpdate(release("v1.1.0"), "1.1.0") && !parseSelfUpdate(release("v1.0.9"), "1.1.0") && parseSelfUpdate(release("v1.10.0"), "1.9.0"));
+        assert(!parseSelfUpdate(release("v1.2.0; rm"), "1.1.0") && !parseSelfUpdate("{}", "1.1.0") && !parseSelfUpdate("not json", "1.1.0"));
+    }
     const auto blog = parseCachyBlog("<li><article><time datetime=\"2026-08-09\">Aug 9, 2026</time> · <a href=\"/category/release\">release</a><h2 class=\"x\"><a class=\"y\" href=\"/blog/2608-august-release\">CachyOS August 2026 Release</a></h2><p class=\"z\">Shelly Rewrite</p></article></li>");
     assert(blog.size() == 1 && blog[0].url == "https://cachyos.org/blog/2608-august-release" && blog[0].date.date() == QDate(2026, 8, 9) && blog[0].summary == "Shelly Rewrite");
     // The update script, run with stand-ins for pacman, paru, flatpak, curl and this program
@@ -357,6 +364,21 @@ int main(int argc, char **argv) {
         qunsetenv("FAIL_PARU");
         const QString onlyApps = updateScript(false, false, false, true, false, &names);
         assert(names == QStringList({"Flatpak apps"}) && !onlyApps.contains("pacman") && !onlyApps.contains("paru") && run(onlyApps, {}).second == "flatpak update -y --noninteractive\n");
+        {   // The store updates itself last, from a release archive of its own repository only
+            const QString url = "https://github.com/LaskyWolf/woofstore/archive/refs/tags/v9.9.9.tar.gz";
+            const QString withSelf = updateScript(true, true, true, true, true, &names, url);
+            assert(names.last() == "WoofStore" && names[names.size() - 2] == "Orphan packages" && withSelf.indexOf("==> WoofStore") > withSelf.indexOf("==> Orphan packages"));
+            updateScript(false, false, false, true, false, &names, "https://evil.example/x'; rm -rf ~; '.tar.gz");
+            assert(names == QStringList({"Flatpak apps"}));  // Any other address is ignored
+            stub("tar", "echo \"tar $*\" >> \"$LOG\"; : > \"$3/PKGBUILD\"\n");
+            stub("makepkg", "echo \"makepkg $*\" >> \"$LOG\"; : > woofstore-9.9.9-1-x86_64.pkg.tar.zst\n");
+            auto self = run(updateScript(false, false, false, false, false, &names, url), {});
+            assert(names == QStringList({"WoofStore"}) && self.first == 0 && self.second.contains("curl -fsSL " + url) && self.second.contains("makepkg -sf --noconfirm") && self.second.contains("pkexec pacman")
+                   && self.second.indexOf("makepkg") < self.second.indexOf("pacman -U --noconfirm") && self.second.contains("woofstore-9.9.9-1-x86_64.pkg.tar.zst"));
+            stub("makepkg", "echo \"makepkg $*\" >> \"$LOG\"; exit 1\n");
+            auto broken = run(updateScript(false, false, false, false, false, &names, url), {});
+            assert(broken.first == 1 && !broken.second.contains("pacman -U"));  // A failed build installs nothing
+        }
         {   // The root step after the upgrade: one pkexec for the upgrade and the cleanup, cache trimmed, services listed (not restarted)
             auto both = run(updateScript(true, false, false, false, false, &names), {});
             QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env);

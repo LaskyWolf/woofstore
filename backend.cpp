@@ -1,4 +1,5 @@
 #include "backend.h"
+#include <QVersionNumber>
 #include <AppStreamQt/bundle.h>
 #include <AppStreamQt/icon.h>
 #include <AppStreamQt/screenshot.h>
@@ -286,7 +287,7 @@ QStringList parseServicesToRestart(const QString &log) {
     return services;
 }
 
-QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames) {
+QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames, const QString &selfUrl) {
     QStringList names; QString script = "fail=0\nexe=\"$1\"; shift\n";
     auto section = [&](const QString &name) { names << name; script += "echo '==> " + name + "'\n"; };
     if (system) {
@@ -319,9 +320,25 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
         section("Orphan packages");  // Only reported: removing them is the user's call
         script += "orphans=$(pacman -Qdtq 2>/dev/null); if [ -n \"$orphans\" ]; then echo 'Orphan packages (nothing needs them any more):'; echo \"$orphans\"; echo 'Remove them with: sudo pacman -Rns $(pacman -Qdtq)'; else echo 'No orphan packages.'; fi\n";
     }
+    static const QRegularExpression releaseArchive("^https://github\\.com/LaskyWolf/woofstore/archive/refs/tags/v[0-9.]+\\.tar\\.gz$");
+    if (releaseArchive.match(selfUrl).hasMatch()) {  // The address goes into the script, so only the project's own release archives are accepted
+        section("WoofStore");
+        script += "dir=$(mktemp -d)\n"
+                  "if curl -fsSL '" + selfUrl + "' | tar -xz -C \"$dir\" --strip-components=1 && (cd \"$dir\" && makepkg -sf --noconfirm) && pkexec pacman -U --noconfirm \"$dir\"/woofstore-[0-9]*.pkg.tar.*; then echo 'WoofStore updated.'; else echo '==> The WoofStore update failed.'; fail=1; fi\n"
+                  "rm -rf \"$dir\"\n";
+    }
     script += "exit $fail\n";
     if (stepNames) *stepNames = names;
     return script;
+}
+
+std::optional<UpdateEntry> parseSelfUpdate(const QByteArray &releaseJson, const QString &current) {
+    const QString tag = QJsonDocument::fromJson(releaseJson).object().value("tag_name").toString();
+    static const QRegularExpression valid("^v[0-9]+(\\.[0-9]+)*$");
+    if (!valid.match(tag).hasMatch()) return std::nullopt;
+    const QString version = tag.mid(1);
+    if (QVersionNumber::fromString(version) <= QVersionNumber::fromString(current)) return std::nullopt;
+    return UpdateEntry{"woofstore", "WoofStore", current, version, "WoofStore", "https://github.com/LaskyWolf/woofstore/archive/refs/tags/" + tag + ".tar.gz"};
 }
 
 QString replaceAppImage(const QString &file, const QString &oldId, const QString &dataRoot, QString *error) {
@@ -862,8 +879,13 @@ void Backend::refresh() {
 void Backend::checkUpdates(std::function<void(QList<UpdateEntry>, QStringList)> done) {
     auto found = std::make_shared<QList<UpdateEntry>>();
     auto problems = std::make_shared<QStringList>();
-    auto pending = std::make_shared<int>(4);
+    auto pending = std::make_shared<int>(5);
     auto finish = [found, problems, pending, done] { if (--*pending == 0) done(*found, *problems); };
+    if (fixtureMode) finish();
+    else fetch(QUrl("https://api.github.com/repos/LaskyWolf/woofstore/releases/latest"), [found, finish](QByteArray json, QString) {  // Offline or rate limited: no entry, nothing to report
+        if (const auto entry = parseSelfUpdate(json, WOOFSTORE_VERSION)) found->append(*entry);
+        finish();
+    });
     QHash<QString, QString> versions; for (const auto &app : installed) if (app.source == "Flatpak") versions.insert(app.id, app.version);
     // Exit codes: checkupdates 2 and paru 1 mean "nothing to update"; a missing tool is skipped.
     readCommand("checkupdates", {}, [found, problems, finish](int code, QString output, QString error) {

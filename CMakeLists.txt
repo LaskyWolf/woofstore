@@ -10,7 +10,7 @@ find_package(KF6Parts REQUIRED)
 find_package(AppStreamQt REQUIRED)
 add_library(store-core backend.cpp catalog.cpp merge.cpp review.cpp leftovers.cpp)
 # Lets a development build read metadata/ from the source tree without installing.
-target_compile_definitions(store-core PRIVATE WOOFSTORE_SOURCE_METADATA="${CMAKE_CURRENT_SOURCE_DIR}/metadata")
+target_compile_definitions(store-core PRIVATE WOOFSTORE_SOURCE_METADATA="${CMAKE_CURRENT_SOURCE_DIR}/metadata" WOOFSTORE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(store-core PUBLIC Qt6::Widgets Qt6::Network Qt6::Concurrent AppStreamQt ZLIB::ZLIB)
 target_compile_options(store-core PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(woof-store main.cpp)

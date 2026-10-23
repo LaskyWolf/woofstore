@@ -60,7 +60,10 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
 // A failed system upgrade stops everything; a failed AUR, Flatpak or AppImage step is reported and the script goes on, ending with status 1.
 // Services listed by the update's last step as "needs-restart: name.service" (they run files the upgrade replaced).
 QStringList parseServicesToRestart(const QString &log);
-QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames);
+// selfUrl: the source archive of a newer WoofStore release. It is built and installed as the very last step, so a failure there loses nothing else.
+QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames, const QString &selfUrl = {});
+// GitHub's latest-release answer against the running version: the update entry (source "WoofStore", url = source archive), or none when it is not newer.
+std::optional<UpdateEntry> parseSelfUpdate(const QByteArray &releaseJson, const QString &current);
 // The pacman.conf for the AUR build chroot, made from the host's: same repositories and signature levels (so multilib and CachyOS
 // resolve), host-only paths dropped, and every "Include" replaced by that file's Server lines (the chroot has no mirrorlist files of its own).
 // readFile returns the text of a file, or an empty string when it cannot be read. Repositories left without a server are dropped.

@@ -198,6 +198,7 @@ public:
         if (inventoryEnabled) {
             QTimer::singleShot(0, this, &Store::loadNews); QTimer::singleShot(3000, this, &Store::checkReboot);
             QTimer::singleShot(0, this, &Store::resumeJob);
+            if (settings.contains("pageAfterRestart")) { const int page = settings.value("pageAfterRestart").toInt(); settings.remove("pageAfterRestart"); QTimer::singleShot(0, this, [this, page] { selectPage(page); }); }
             if (settings.value("orphansAfterRestart", false).toBool()) { settings.remove("orphansAfterRestart"); QTimer::singleShot(4000, this, [this] { showOrphans(true); }); }
         }
         connect(navigation, &QButtonGroup::idClicked, this, &Store::selectPage);
@@ -502,6 +503,7 @@ public:
             refreshActivity();
             // A system upgrade replaces the libraries this window is running with, so it restarts instead of reading more files from them.
             if (ok && inventoryEnabled && title == "System Update" && packageJobsIncludeSystem) { afterSystemUpgrade(parseServicesToRestart(*output)); return; }
+            if (ok && inventoryEnabled && title == "Update WoofStore") { restartAfterUpgrade(); return; }  // The new version starts instead of the old one
             if (ok && inventoryEnabled && title == "Restart services" && restartStoreAfterJob) { restartStoreAfterJob = false; restartAfterUpgrade(); return; }
             if (!ok) restartStoreAfterJob = false;
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
@@ -544,7 +546,7 @@ public:
     }
     void restartAfterUpgrade() {
         QMessageBox::information(this, "System Update finished", "WoofStore restarts now to load the updated libraries.");
-        settings.setValue("orphansAfterRestart", true);
+        settings.setValue("orphansAfterRestart", true); settings.setValue("pageAfterRestart", 2);  // Back to Updates
         QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");  // pacman replaced the file this process started from
         if (!QFileInfo(exe).isExecutable()) exe = QStandardPaths::findExecutable("woof-store");
         QProcess::startDetached("sh", {"-c", "sleep 1.5; exec \"$0\"", exe});
@@ -1015,8 +1017,9 @@ private:
 
     // One button updates everything: the system first (a full pacman -Syu), then the AUR, Flatpak and AppImages. Nothing runs after a failed system upgrade.
     void runUpdates() {
-        int arch = 0, aur = 0, flatpaks = 0; QList<UpdateEntry> images;
+        int arch = 0, aur = 0, flatpaks = 0; QList<UpdateEntry> images; QString selfUrl, selfVersion;
         for (const auto &entry : pendingUpdates) {
+            if (entry.source == "WoofStore") { selfUrl = entry.url; selfVersion = entry.to; continue; }
             if (entry.source == "Arch") ++arch; else if (entry.source == "AUR") ++aur;
             else if (entry.source == "Flatpak") ++flatpaks; else if (entry.source == "AppImage") images.append(entry);
         }
@@ -1026,6 +1029,7 @@ private:
         if (aur) lines << "• " + count(aur, "AUR package", "AUR packages");
         if (flatpaks) lines << "• " + count(flatpaks, "Flatpak app", "Flatpak apps");
         if (!images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
+        if (!selfUrl.isEmpty()) lines << "• WoofStore " + selfVersion + " from GitHub, last: it is built and installed after everything else, then the store restarts";
         lines << "• Afterwards: old cached packages are removed (three versions of each stay), services running old files are offered for a restart, and orphan packages are listed, never removed without asking";
         const QString title = "System Update";
         // Important news (manual interventions) published since the last System Update: read them before the upgrade, not after it breaks.
@@ -1037,18 +1041,19 @@ private:
         const auto choice = askUpdate(title, "This updates:\n" + lines.join('\n') + newsNote + "\n\nThe system comes first. You will be asked for your password, and if the system upgrade fails nothing else is updated. "
                                              "The update keeps running if you close WoofStore.", aur);
         if (!choice.ok) return;
-        runUpdateScript(title, true, (aur > 0 && choice.aur) || choice.devel, choice.devel, flatpaks > 0, images);
+        runUpdateScript(title, true, (aur > 0 && choice.aur) || choice.devel, choice.devel, flatpaks > 0, images, {}, selfUrl);
     }
 
     void runUpdateOne(const UpdateEntry &entry) {
-        if (entry.source == "Flatpak") startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id});
+        if (entry.source == "WoofStore") runUpdateScript("Update WoofStore", false, false, false, false, {}, {}, entry.url);
+        else if (entry.source == "Flatpak") startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id});
         else runUpdateScript("Update " + entry.name, false, false, false, false, {entry});
     }
 
 public:
-    void runUpdateScript(const QString &title, bool system, bool aur, bool devel, bool flatpak, const QList<UpdateEntry> &images, const QString &importer = {}) {
+    void runUpdateScript(const QString &title, bool system, bool aur, bool devel, bool flatpak, const QList<UpdateEntry> &images, const QString &importer = {}, const QString &selfUrl = {}) {
         QStringList names, items;
-        const QString script = updateScript(system, aur, devel, flatpak, !images.isEmpty(), &names);
+        const QString script = updateScript(system, aur, devel, flatpak, !images.isEmpty(), &names, selfUrl);
         for (const auto &entry : images) items << entry.id + '\t' + entry.url + '\t' + entry.name;
         auto current = std::make_shared<int>(0);
         const auto stepOf = [names, current](const QString &text) {
@@ -1299,7 +1304,7 @@ private:
         backend.checkUpdates([this](QList<UpdateEntry> found, QStringList problems) {
             updateChecking = false; updatesChecked = true; lastUpdateCheck = QTime::currentTime();
             pendingUpdates = found; updateProblems = problems;
-            refreshUpdates();
+            refreshUpdates(); renderInstalled();  // The store's own row says when a new version is out
         });
     }
 
@@ -1330,7 +1335,7 @@ private:
         // Apps: Flatpaks, and Arch packages that have a menu entry. Everything else is system.
         QList<UpdateEntry> apps, system; QHash<QString, const App *> installedById;
         for (const auto &installed : backend.installed) if (installed.source == "Arch" || installed.source == "AUR / local") installedById.insert(installed.id, &installed);
-        for (const auto &entry : pendingUpdates) (entry.source == "Flatpak" || entry.source == "AppImage" || installedById.contains(entry.id) ? apps : system).append(entry);
+        for (const auto &entry : pendingUpdates) (entry.source == "Flatpak" || entry.source == "AppImage" || entry.source == "WoofStore" || installedById.contains(entry.id) ? apps : system).append(entry);
         auto group = [this, &installedById](const QString &title, const QList<UpdateEntry> &entries, const QString &name) {
             if (entries.isEmpty()) return;
             updatesRows->addWidget(label(QString("%1 · %2").arg(title).arg(entries.size()), 0, true));
@@ -1340,7 +1345,8 @@ private:
             for (const auto &entry : entries) {
                 const App *known = entry.source == "Flatpak" ? nullptr : installedById.value(entry.id, nullptr);
                 QIcon icon = QIcon::fromTheme(entry.source == "Flatpak" ? entry.id : "package-x-generic", QIcon::fromTheme(entry.source == "Flatpak" ? "application-x-executable" : "package-x-generic"));
-                if (entry.source == "Flatpak" || entry.source == "AppImage") { for (const auto &installed : backend.installed) if (installed.id == entry.id && !installed.icon.isNull()) icon = installed.icon; }
+                if (entry.source == "WoofStore") icon = QIcon::fromTheme("io.github.laskywolf.WoofStore", QApplication::windowIcon());
+                else if (entry.source == "Flatpak" || entry.source == "AppImage") { for (const auto &installed : backend.installed) if (installed.id == entry.id && !installed.icon.isNull()) icon = installed.icon; }
                 else if (known && !known->icon.isNull()) icon = known->icon;
                 auto *row = new QWidget; row->setObjectName("updateRow"); auto *layout = new QHBoxLayout(row); layout->setContentsMargins(0, 6, 0, 6); layout->setSpacing(12);
                 auto *symbol = new QLabel; symbol->setFixedSize(40, 40); symbol->setPixmap(icon.pixmap(40, 40));
@@ -1351,9 +1357,9 @@ private:
                 if (!entry.from.isEmpty()) { version->setTextFormat(Qt::RichText); version->setText(change.first + "&nbsp;&nbsp;→&nbsp;&nbsp;" + change.second); }
                 copy->addWidget(title); copy->addWidget(version);
                 layout->addWidget(symbol); layout->addLayout(copy, 1);
-                if (entry.source == "Flatpak" || entry.source == "AppImage" || known) {
+                if (entry.source == "Flatpak" || entry.source == "AppImage" || entry.source == "WoofStore" || known) {
                     auto *update = new QPushButton(QIcon::fromTheme("system-software-update"), "Update"); update->setMinimumHeight(34); update->setCursor(Qt::PointingHandCursor);
-                    if (entry.source == "Flatpak" || entry.source == "AppImage") {
+                    if (entry.source == "Flatpak" || entry.source == "AppImage" || entry.source == "WoofStore") {
                         update->setObjectName("updateOne");
                         connect(update, &QPushButton::clicked, this, [this, entry] { runUpdateOne(entry); });
                     } else { update->setEnabled(false); update->setToolTip("This package updates with System Update, because Arch does not support updating one package alone."); }
@@ -1438,7 +1444,8 @@ private:
             if (!app.scope.isEmpty()) metadata << app.scope;
             if (!app.version.isEmpty()) metadata << app.version;
             // One quiet line: what the app is, or its version when its publisher says nothing.
-            const QString line = !app.summary.isEmpty() ? app.summary : app.version.isEmpty() ? QString() : "Version " + app.version;
+            QString line = !app.summary.isEmpty() ? app.summary : app.version.isEmpty() ? QString() : "Version " + app.version;
+            if (app.id == "woofstore") for (const auto &entry : pendingUpdates) if (entry.source == "WoofStore") line = "Version " + entry.to + " is available on GitHub. Update it in Updates.";
             const bool managed = app.source != "Other";  // Only apps with a package manager or one of our files can be removed here
             installedList->addApp(app.name, line, icon, index, metadata.join(" · "), managed ? &previewOperations : nullptr, app.id, true, app.source, app.source != "AppImage");
         }
