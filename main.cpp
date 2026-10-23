@@ -266,7 +266,6 @@ public:
                 {"9to5Linux", "Mesa 26.2 released with Vulkan improvements", "The release adds drivers for new GPUs and speeds up shader compilation.", "https://9to5linux.com", now.addDays(-6), false, QString(WOOFSTORE_FIXTURES) + "/images/org.gimp.GIMP-screenshot.png", {}}};
         news.append({"Phoronix", "Linux 7.2 fixes a privilege escalation flaw", "A local attacker could gain root. Update the kernel.", "https://phoronix.com", now.addDays(-2), false, {}, {}});
         for (auto &item : news) item.topics = newsTopics(item.source, item.title, item.summary, {});
-        rebuildNewsTopics();
         newsLoading = false;
         selectPage(3); newsPillSince = now.addDays(-2);  // Opening the page marks the real news as seen; the preview keeps its own pills
         renderNews();
@@ -839,7 +838,7 @@ public:
     QStringList updateProblems;
     QList<NewsItem> news; QStringList newsProblems; bool newsLoading = false;
     QDateTime newsPillSince;  // News newer than this carry the "New" pill while the page is open
-    QLineEdit *newsSearch = nullptr; QLabel *newsStatus = nullptr; QHBoxLayout *newsRow = nullptr; QScrollArea *newsScroll = nullptr; QPushButton *newsMore = nullptr; QHBoxLayout *newsChips = nullptr; StickyBar *newsSticky = nullptr; QString newsTopic; QWidget *newsLoadingBox = nullptr; int newsColumnCount = 0, newsExtra = 0;
+    QLineEdit *newsSearch = nullptr; QLabel *newsStatus = nullptr; QHBoxLayout *newsRow = nullptr; QScrollArea *newsScroll = nullptr; QPushButton *newsMore = nullptr; QWidget *newsPanel = nullptr; QToolButton *newsFilters = nullptr; QVariantAnimation *newsMotion = nullptr; QList<QPushButton *> newsTopicButtons; StickyBar *newsSticky = nullptr; QString newsTopic; QWidget *newsLoadingBox = nullptr; int newsColumnCount = 0, newsExtra = 0;
     bool rebootNotified = false; uint rebootNoticeId = 0;
     bool updateChecking = false, updatesChecked = false;
     QTime lastUpdateCheck;
@@ -1167,12 +1166,40 @@ private:
         auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshNews");
         refresh->setFixedSize(38, 38); refresh->setToolTip("Reload the news"); refresh->setAccessibleName("Reload the news"); refresh->setCursor(Qt::PointingHandCursor);
         row->addWidget(newsSearch, 1); row->addWidget(refresh);
+        // Same filter button and colour grid as Explore: the grid slides open under the search row, and with no topic chosen every article shows.
+        newsFilters = new QToolButton; newsFilters->setObjectName("newsFilters"); newsFilters->setIcon(QIcon::fromTheme("view-filter")); newsFilters->setText("Filters"); newsFilters->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); newsFilters->setCheckable(true);
+        newsFilters->setMinimumHeight(38); newsFilters->setAccessibleName("Show or hide the topics");
+        row->insertWidget(1, newsFilters);
         sticky->column->addLayout(row);
-        auto *chipScroll = new QScrollArea; chipScroll->setObjectName("newsTopics"); chipScroll->setFrameShape(QFrame::NoFrame); chipScroll->setWidgetResizable(true); chipScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        auto *chipBody = new QWidget; chipBody->setObjectName("newsTopicsBody"); newsChips = new QHBoxLayout(chipBody); newsChips->setContentsMargins(0, 0, 0, 0); newsChips->setSpacing(8);
-        chipScroll->setWidget(chipBody); chipScroll->setFixedHeight(40); chipScroll->setStyleSheet("QScrollArea, #newsTopicsBody {background: transparent;}");
-        sticky->column->addWidget(chipScroll); newsSticky = sticky;
-        rebuildNewsTopics(); sticky->fit();
+        newsPanel = new QWidget; newsPanel->setObjectName("newsTopics"); auto *topics = new QGridLayout(newsPanel); topics->setContentsMargins(0, 0, 0, 0); topics->setSpacing(10);
+        const QList<QPair<QString, QString>> icons{{"Security", "shield"}, {"Gaming", "gamepad"}, {"Desktop", "monitor"}, {"Hardware", "cpu"}, {"Apps", "grid"}, {"Linux", "terminal"}};
+        for (int i = 0; i < icons.size(); ++i) {
+            const QString topic = icons[i].first;
+            const QIcon symbol = lucideIcon(icons[i].second, 22, Qt::white);
+            auto *pill = new QPushButton(symbol, topic); pill->setObjectName("newsTopic"); pill->setProperty("topic", topic); pill->setAccessibleName(topic); pill->setIconSize(QSize(22, 22));
+            pill->setCheckable(true); pill->setMinimumHeight(58); pill->setCursor(Qt::PointingHandCursor);
+            pill->setStyleSheet(QString("QPushButton {background:%1;color:white;border:2px solid transparent;border-radius:9px;font-weight:bold;padding:8px;} QPushButton:hover,QPushButton:focus,QPushButton:checked {border-color:white;}").arg(newsTopicColor(topic).name()));
+            newsTopicButtons << pill; topics->addWidget(pill, i / 3, i % 3);
+            connect(pill, &QPushButton::clicked, this, [this, topic, pill](bool checked) {
+                for (auto *other : newsTopicButtons) if (other != pill) other->setChecked(false);
+                newsTopic = checked ? topic : QString(); newsExtra = 0; renderNews();
+            });
+        }
+        sticky->column->addWidget(newsPanel); newsSticky = sticky; newsPanel->hide();
+        newsMotion = new QVariantAnimation(this); newsMotion->setObjectName("newsFilterMotion"); newsMotion->setEasingCurve(QEasingCurve::OutCubic);
+        connect(newsMotion, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) { newsPanel->setFixedHeight(value.toInt()); newsSticky->fit(); });
+        connect(newsMotion, &QVariantAnimation::finished, this, [this] {
+            if (newsFilters->isChecked()) { newsPanel->setMinimumHeight(0); newsPanel->setMaximumHeight(QWIDGETSIZE_MAX); } else newsPanel->hide();
+            newsSticky->fit();
+        });
+        connect(newsFilters, &QToolButton::toggled, this, [this](bool expanded) {
+            newsMotion->stop(); const int start = newsPanel->isHidden() ? 0 : newsPanel->height();
+            const int target = expanded ? newsPanel->sizeHint().height() : 0;
+            newsPanel->show(); const int duration = desktopAnimationDuration(240);
+            if (!isVisible() || !duration) { newsPanel->setVisible(expanded); newsPanel->setMinimumHeight(0); newsPanel->setMaximumHeight(QWIDGETSIZE_MAX); newsSticky->fit(); return; }
+            newsPanel->setFixedHeight(start); newsMotion->setDuration(duration); newsMotion->setStartValue(start); newsMotion->setEndValue(target); newsMotion->start();
+        });
+        sticky->fit();
         newsStatus = label(""); newsStatus->setObjectName("newsStatus"); newsStatus->setForegroundRole(QPalette::PlaceholderText); content->addWidget(newsStatus);
         newsLoadingBox = new QWidget; newsLoadingBox->setObjectName("newsLoading"); newsLoadingBox->setMinimumHeight(260);
         auto *loadingLayout = new QVBoxLayout(newsLoadingBox); loadingLayout->setSpacing(14); loadingLayout->setAlignment(Qt::AlignCenter);
@@ -1189,26 +1216,6 @@ private:
         connect(refresh, &QPushButton::clicked, this, &Store::loadNews);
         renderNews();
     }
-    // One pill per topic that has articles, with its count; the chosen pill filters the cards.
-    void rebuildNewsTopics() {
-        while (auto *item = newsChips->takeAt(0)) { delete item->widget(); delete item; }
-        QHash<QString, int> counts; for (const auto &item : news) for (const QString &topic : item.topics) ++counts[topic];
-        if (!counts.contains(newsTopic)) newsTopic.clear();
-        QList<QPushButton *> pills;
-        for (const QString &topic : newsTopicNames) {
-            if (!counts.value(topic)) continue;
-            auto *pill = new QPushButton(QString("%1 · %2").arg(topic).arg(counts.value(topic)).replace('&', "&&"));
-            pill->setObjectName("newsTopic"); pill->setProperty("topic", topic); pill->setCheckable(true); pill->setChecked(topic == newsTopic); pill->setCursor(Qt::PointingHandCursor);
-            pill->setMinimumHeight(36); pill->setAccessibleName(topic);
-            pill->setStyleSheet(QString("QPushButton {background:%1;color:white;border:2px solid transparent;border-radius:9px;font-weight:bold;padding:4px 16px;} QPushButton:hover,QPushButton:focus,QPushButton:checked {border-color:white;}").arg(newsTopicColor(topic).name()));
-            pills << pill; newsChips->addWidget(pill);
-            connect(pill, &QPushButton::clicked, this, [this, topic, pill, pills](bool checked) {  // Like Explore: none chosen shows everything
-                for (auto *other : pills) if (other != pill) other->setChecked(false);
-                newsTopic = checked ? topic : QString(); newsExtra = 0; renderNews();
-            });
-        }
-        newsChips->addStretch();
-    }
     static QColor newsTopicColor(const QString &topic) {
         static const QHash<QString, QColor> colors = {{"Security", "#a53a3a"}, {"Gaming", "#a24465"}, {"Desktop", "#315c91"}, {"Hardware", "#8d5134"}, {"Apps", "#674296"}, {"Linux", "#356b58"}};
         return colors.value(topic, QColor("#5c567e"));
@@ -1217,7 +1224,7 @@ private:
         if (newsLoading) return;
         newsLoading = true; renderNews();
         backend.loadNews([this](QList<NewsItem> items, QStringList problems) {
-            newsLoading = false; news = items; newsProblems = problems; rebuildNewsTopics();
+            newsLoading = false; news = items; newsProblems = problems;
             if (!settings.contains("newsSeen") && newestImportantNews().isValid()) settings.setValue("newsSeen", newestImportantNews().toString(Qt::ISODate));  // The first start has nothing unread
             renderNews(); refreshNewsBadge();
         });
@@ -1551,6 +1558,7 @@ int main(int argc, char **argv) {
     parser.addOption({"mosaic-hover", "Preview a floating mosaic app card.", "app-id"});
     parser.addOption({"explore-collection", "Preview the discovery collection."});
     parser.addOption({"explore-filters", "Show the expanded Explore filters."});
+    parser.addOption({"news-filters", "Show the expanded News topics."});
     parser.addOption({"search", "Type this search in a live-catalog preview.", "text"});
     parser.addOption({"details-app", "Preview an app detail page.", "app-id"});
     parser.addOption({"details-gallery", "Preview the screenshot carousel."});
@@ -1661,11 +1669,17 @@ int main(int argc, char **argv) {
         passed &= store.findChildren<QFrame *>("newsCard").size() == 7 && store.findChildren<QLabel *>("newsFresh").size() == 1;
         {   // Topic pills filter the cards; with none chosen every card shows
             auto pill = [&store](const QString &topic) -> QPushButton * { for (auto *button : store.findChildren<QPushButton *>("newsTopic")) if (button->property("topic").toString() == topic) return button; return nullptr; };
-            passed &= pill("Security") && pill("Linux") && pill("Hardware") && !pill("Apps") && !pill("Security")->isChecked();
+            auto *filters = store.findChild<QToolButton *>("newsFilters"); auto *panel = store.findChild<QWidget *>("newsTopics"); auto *motion = store.findChild<QVariantAnimation *>("newsFilterMotion");
+            passed &= pill("Security") && pill("Linux") && pill("Hardware") && pill("Apps") && !pill("Security")->isChecked() && pill("Security")->text() == "Security" && !pill("Security")->icon().isNull();
+            passed &= !panel->isVisibleTo(store.findChild<QWidget *>("newsPageBody")) && !filters->isChecked();  // Closed until the Filters button opens it
+            filters->click(); if (motion->state() == QAbstractAnimation::Running) motion->setCurrentTime(motion->duration());
+            passed &= panel->isVisibleTo(store.findChild<QWidget *>("newsPageBody"));
             pill("Security")->click();
             passed &= store.findChildren<QFrame *>("newsCard").size() == 1 && pill("Security")->isChecked();
             pill("Linux")->click(); passed &= store.findChildren<QFrame *>("newsCard").size() == 5 && !pill("Security")->isChecked();
             pill("Linux")->click(); passed &= store.findChildren<QFrame *>("newsCard").size() == 7 && !pill("Linux")->isChecked();
+            filters->click(); if (motion->state() == QAbstractAnimation::Running) motion->setCurrentTime(motion->duration());
+            passed &= !panel->isVisibleTo(store.findChild<QWidget *>("newsPageBody"));
         }
         store.findChild<QLineEdit *>("newsSearch")->setText("plasma");
         passed &= store.findChildren<QFrame *>("newsCard").size() == 1;
@@ -2160,6 +2174,7 @@ int main(int argc, char **argv) {
     }
     static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->advance(qBound(0, parser.value("carousel-slide").toInt(), 2));
     if (parser.isSet("explore-filters")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->filters->setChecked(true);
+    if (parser.isSet("news-filters")) store.findChild<QToolButton *>("newsFilters")->setChecked(true);
     if (parser.isSet("compact")) store.resize(760, 800);
     if (parser.isSet("details-app")) {
         auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));

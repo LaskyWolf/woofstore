@@ -156,6 +156,19 @@ inline void drawLucide(QPainter &p, const QString &name, const QRectF &box, cons
         line(15, 3, 21, 3); line(21, 3, 21, 9); line(10, 14, 21, 3);
         QPainterPath box; box.moveTo(at(18, 13)); box.lineTo(at(18, 19)); box.arcTo(QRectF(at(14, 17), QSizeF(4 * unit, 4 * unit)), 0, -90); box.lineTo(at(5, 21)); box.arcTo(QRectF(at(3, 19), QSizeF(4 * unit, 4 * unit)), -90, -90);
         box.lineTo(at(3, 8)); box.arcTo(QRectF(at(3, 6), QSizeF(4 * unit, 4 * unit)), 180, -90); box.lineTo(at(11, 6)); p.drawPath(box);
+    } else if (name == "shield") {
+        QPainterPath shield; shield.moveTo(at(12, 2.5)); shield.lineTo(at(20, 5.5)); shield.lineTo(at(20, 12));
+        shield.cubicTo(at(20, 17), at(16, 20.5), at(12, 22)); shield.cubicTo(at(8, 20.5), at(4, 17), at(4, 12)); shield.lineTo(at(4, 5.5)); shield.closeSubpath();
+        p.drawPath(shield); line(9, 12, 11, 14); line(11, 14, 15, 10);
+    } else if (name == "gamepad") {
+        p.drawRoundedRect(QRectF(at(2.5, 6), QSizeF(19 * unit, 12 * unit)), 6 * unit, 6 * unit); line(7, 10, 7, 14); line(5, 12, 9, 12); line(15, 11, 15.01, 11); line(18, 13, 18.01, 13);
+    } else if (name == "monitor") {
+        p.drawRoundedRect(QRectF(at(2, 3), QSizeF(20 * unit, 14 * unit)), 2 * unit, 2 * unit); line(8, 21, 16, 21); line(12, 17, 12, 21);
+    } else if (name == "cpu") {
+        p.drawRoundedRect(QRectF(at(4, 4), QSizeF(16 * unit, 16 * unit)), 2 * unit, 2 * unit); p.drawRoundedRect(QRectF(at(9, 9), QSizeF(6 * unit, 6 * unit)), unit, unit);
+        for (const qreal edge : {9., 15.}) { line(edge, 1, edge, 4); line(edge, 20, edge, 23); line(1, edge, 4, edge); line(20, edge, 23, edge); }
+    } else if (name == "terminal") {
+        line(4, 17, 10, 11); line(10, 11, 4, 5); line(12, 19, 20, 19);
     } else if (name == "grid") { square(3, 3, 7, 1); square(14, 3, 7, 1); square(3, 14, 7, 1); square(14, 14, 7, 1);
     } else if (name == "circle-check") { p.drawEllipse(at(12, 12), 10 * unit, 10 * unit); line(8, 12, 11, 15); line(11, 15, 16, 9);
     } else if (name == "search-x") { p.drawEllipse(at(11, 11), 8 * unit, 8 * unit); line(21, 21, 16.65, 16.65); line(13.5, 8.5, 8.5, 13.5); line(8.5, 8.5, 13.5, 13.5);
