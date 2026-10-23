@@ -43,7 +43,10 @@ struct ReleaseAsset { QString url, zsyncUrl, version; };
 ReleaseAsset pickReleaseAsset(const QByteArray &releaseJson, const QString &pattern);
 
 // A news item from a feed or a blog. important: from the distribution itself, so it counts for the sidebar badge.
-struct NewsItem { QString source, title, summary, url; QDateTime date; bool important = false; QString image; };  // image: address of the cover picture, empty when the feed has none
+struct NewsItem { QString source, title, summary, url; QDateTime date; bool important = false; QString image; QStringList topics; };  // image: address of the cover picture, empty when the feed has none
+// The topics an article belongs to (never empty): what its source covers, the feed's own categories, and words in the title and summary.
+QStringList newsTopics(const QString &source, const QString &title, const QString &summary, const QStringList &feedCategories);
+extern const QStringList newsTopicNames;  // In the order the filter shows them
 QList<NewsItem> parseFeed(const QByteArray &xml, const QString &source, bool important);
 QList<NewsItem> parseCachyBlog(const QString &html);
 

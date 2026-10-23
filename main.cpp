@@ -257,12 +257,15 @@ public:
     // Sample news for screenshots and checks: no network.
     void previewNews() {
         const QDateTime now(QDate(2026, 10, 18), QTime(12, 0));
-        news = {{"Arch Linux", "Manual intervention required for the nvidia 580 driver update", "Packages from the 580 series need the older driver removed first. Remove it before you update, then install nvidia-open again.", "https://archlinux.org/news/", now, true, {}},
-                {"CachyOS", "CachyOS October 2026 Release", "New ISO, kernel 7.2 as default and a reworked update tool.", "https://cachyos.org/blog/", now.addDays(-3), true, {}},
-                {"Linux kernel", "7.2.11: stable", "", "https://kernel.org", now.addDays(-1), false, {}},
-                {"KDE", "Plasma 6.9 beta is out for testing", "The beta brings a new panel editor, faster window previews and many fixes in the Wayland session. Testers can report problems until the final release.", "https://kde.org/announcements/", now.addDays(-4), false, QString(WOOFSTORE_FIXTURES) + "/images/org.kde.krita-screenshot.png"},
-                {"LWN.net", "A look at the new scheduler extension class", "Sched_ext lets programs written in BPF decide which task runs next.", "https://lwn.net", now.addDays(-5), false, {}},
-                {"9to5Linux", "Mesa 26.2 released with Vulkan improvements", "The release adds drivers for new GPUs and speeds up shader compilation.", "https://9to5linux.com", now.addDays(-6), false, QString(WOOFSTORE_FIXTURES) + "/images/org.gimp.GIMP-screenshot.png"}};
+        news = {{"Arch Linux", "Manual intervention required for the nvidia 580 driver update", "Packages from the 580 series need the older driver removed first. Remove it before you update, then install nvidia-open again.", "https://archlinux.org/news/", now, true, {}, {}},
+                {"CachyOS", "CachyOS October 2026 Release", "New ISO, kernel 7.2 as default and a reworked update tool.", "https://cachyos.org/blog/", now.addDays(-3), true, {}, {}},
+                {"Linux kernel", "7.2.11: stable", "", "https://kernel.org", now.addDays(-1), false, {}, {}},
+                {"KDE", "Plasma 6.9 beta is out for testing", "The beta brings a new panel editor, faster window previews and many fixes in the Wayland session. Testers can report problems until the final release.", "https://kde.org/announcements/", now.addDays(-4), false, QString(WOOFSTORE_FIXTURES) + "/images/org.kde.krita-screenshot.png", {}},
+                {"LWN.net", "A look at the new scheduler extension class", "Sched_ext lets programs written in BPF decide which task runs next.", "https://lwn.net", now.addDays(-5), false, {}, {}},
+                {"9to5Linux", "Mesa 26.2 released with Vulkan improvements", "The release adds drivers for new GPUs and speeds up shader compilation.", "https://9to5linux.com", now.addDays(-6), false, QString(WOOFSTORE_FIXTURES) + "/images/org.gimp.GIMP-screenshot.png", {}}};
+        news.append({"Phoronix", "Linux 7.2 fixes a privilege escalation flaw", "A local attacker could gain root. Update the kernel.", "https://phoronix.com", now.addDays(-2), false, {}, {}});
+        for (auto &item : news) item.topics = newsTopics(item.source, item.title, item.summary, {});
+        rebuildNewsTopics();
         newsLoading = false;
         selectPage(3); newsPillSince = now.addDays(-2);  // Opening the page marks the real news as seen; the preview keeps its own pills
         renderNews();
@@ -834,7 +837,7 @@ public:
     QStringList updateProblems;
     QList<NewsItem> news; QStringList newsProblems; bool newsLoading = false;
     QDateTime newsPillSince;  // News newer than this carry the "New" pill while the page is open
-    QLineEdit *newsSearch = nullptr; QLabel *newsStatus = nullptr; QHBoxLayout *newsRow = nullptr; QScrollArea *newsScroll = nullptr; QPushButton *newsMore = nullptr; QWidget *newsLoadingBox = nullptr; int newsColumnCount = 0, newsExtra = 0;
+    QLineEdit *newsSearch = nullptr; QLabel *newsStatus = nullptr; QHBoxLayout *newsRow = nullptr; QScrollArea *newsScroll = nullptr; QPushButton *newsMore = nullptr; QHBoxLayout *newsChips = nullptr; StickyBar *newsSticky = nullptr; QString newsTopic; QWidget *newsLoadingBox = nullptr; int newsColumnCount = 0, newsExtra = 0;
     bool rebootNotified = false; uint rebootNoticeId = 0;
     bool updateChecking = false, updatesChecked = false;
     QTime lastUpdateCheck;
@@ -1159,7 +1162,12 @@ private:
         auto *refresh = new QPushButton(lucideIcon("refresh", 20), {}); refresh->setObjectName("refreshNews");
         refresh->setFixedSize(38, 38); refresh->setToolTip("Reload the news"); refresh->setAccessibleName("Reload the news"); refresh->setCursor(Qt::PointingHandCursor);
         row->addWidget(newsSearch, 1); row->addWidget(refresh);
-        sticky->column->addLayout(row); sticky->fit();
+        sticky->column->addLayout(row);
+        auto *chipScroll = new QScrollArea; chipScroll->setObjectName("newsTopics"); chipScroll->setFrameShape(QFrame::NoFrame); chipScroll->setWidgetResizable(true); chipScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        auto *chipBody = new QWidget; chipBody->setObjectName("newsTopicsBody"); newsChips = new QHBoxLayout(chipBody); newsChips->setContentsMargins(0, 0, 0, 0); newsChips->setSpacing(8);
+        chipScroll->setWidget(chipBody); chipScroll->setFixedHeight(40); chipScroll->setStyleSheet("QScrollArea, #newsTopicsBody {background: transparent;}");
+        sticky->column->addWidget(chipScroll); newsSticky = sticky;
+        rebuildNewsTopics(); sticky->fit();
         newsStatus = label(""); newsStatus->setObjectName("newsStatus"); newsStatus->setForegroundRole(QPalette::PlaceholderText); content->addWidget(newsStatus);
         newsLoadingBox = new QWidget; newsLoadingBox->setObjectName("newsLoading"); newsLoadingBox->setMinimumHeight(260);
         auto *loadingLayout = new QVBoxLayout(newsLoadingBox); loadingLayout->setSpacing(14); loadingLayout->setAlignment(Qt::AlignCenter);
@@ -1176,11 +1184,35 @@ private:
         connect(refresh, &QPushButton::clicked, this, &Store::loadNews);
         renderNews();
     }
+    // One pill per topic that has articles, with its count; the chosen pill filters the cards.
+    void rebuildNewsTopics() {
+        while (auto *item = newsChips->takeAt(0)) { delete item->widget(); delete item; }
+        QHash<QString, int> counts; for (const auto &item : news) for (const QString &topic : item.topics) ++counts[topic];
+        if (!counts.contains(newsTopic)) newsTopic.clear();
+        QList<QPushButton *> pills;
+        for (const QString &topic : newsTopicNames) {
+            if (!counts.value(topic)) continue;
+            auto *pill = new QPushButton(QString("%1 · %2").arg(topic).arg(counts.value(topic)).replace('&', "&&"));
+            pill->setObjectName("newsTopic"); pill->setProperty("topic", topic); pill->setCheckable(true); pill->setChecked(topic == newsTopic); pill->setCursor(Qt::PointingHandCursor);
+            pill->setMinimumHeight(36); pill->setAccessibleName(topic);
+            pill->setStyleSheet(QString("QPushButton {background:%1;color:white;border:2px solid transparent;border-radius:9px;font-weight:bold;padding:4px 16px;} QPushButton:hover,QPushButton:focus,QPushButton:checked {border-color:white;}").arg(newsTopicColor(topic).name()));
+            pills << pill; newsChips->addWidget(pill);
+            connect(pill, &QPushButton::clicked, this, [this, topic, pill, pills](bool checked) {  // Like Explore: none chosen shows everything
+                for (auto *other : pills) if (other != pill) other->setChecked(false);
+                newsTopic = checked ? topic : QString(); newsExtra = 0; renderNews();
+            });
+        }
+        newsChips->addStretch();
+    }
+    static QColor newsTopicColor(const QString &topic) {
+        static const QHash<QString, QColor> colors = {{"Security", "#a53a3a"}, {"Gaming", "#a24465"}, {"Desktop", "#315c91"}, {"Hardware", "#8d5134"}, {"Apps", "#674296"}, {"Linux", "#356b58"}};
+        return colors.value(topic, QColor("#5c567e"));
+    }
     void loadNews() {
         if (newsLoading) return;
         newsLoading = true; renderNews();
         backend.loadNews([this](QList<NewsItem> items, QStringList problems) {
-            newsLoading = false; news = items; newsProblems = problems;
+            newsLoading = false; news = items; newsProblems = problems; rebuildNewsTopics();
             if (!settings.contains("newsSeen") && newestImportantNews().isValid()) settings.setValue("newsSeen", newestImportantNews().toString(Qt::ISODate));  // The first start has nothing unread
             renderNews(); refreshNewsBadge();
         });
@@ -1198,7 +1230,7 @@ private:
         refreshNewsBadge(); renderNews();
     }
     static QColor newsColor(const QString &source) {
-        static const QHash<QString, QColor> colors = {{"Arch Linux", "#1793d1"}, {"CachyOS", "#1abc9c"}, {"Linux kernel", "#f1c40f"}, {"KDE", "#3daee9"}, {"LWN.net", "#8e6bbf"}, {"9to5Linux", "#e74c3c"}, {"Phoronix", "#7f8c8d"}, {"GamingOnLinux", "#27ae60"}, {"OMG! Ubuntu", "#e95420"}, {"Fedora Magazine", "#3c6eb4"}, {"Linuxiac", "#16a085"}, {"It's FOSS", "#e67e22"}};
+        static const QHash<QString, QColor> colors = {{"Arch Linux", "#1793d1"}, {"CachyOS", "#1abc9c"}, {"Linux kernel", "#f1c40f"}, {"KDE", "#3daee9"}, {"LWN.net", "#8e6bbf"}, {"9to5Linux", "#e74c3c"}, {"Phoronix", "#7f8c8d"}, {"GamingOnLinux", "#27ae60"}, {"OMG! Ubuntu", "#e95420"}, {"Fedora Magazine", "#3c6eb4"}, {"Linuxiac", "#16a085"}, {"It's FOSS", "#e67e22"}, {"Linux Mint", "#87cf3e"}, {"Blender", "#ea7600"}, {"Krita", "#3babff"}, {"Godot", "#478cbf"}, {"LibreOffice", "#18a303"}, {"Flathub", "#4a86cf"}};
         return colors.value(source, QColor("#6c757d"));
     }
     QWidget *newsCard(const NewsItem &item) {
@@ -1243,8 +1275,9 @@ private:
         const int perSource = 2 + 2 * newsExtra, total = 15 + 12 * newsExtra;
         int shown = 0, hidden = 0; QHash<QString, int> perSourceCount;
         for (const auto &item : news) {
+            if (!newsTopic.isEmpty() && !item.topics.contains(newsTopic)) continue;
             if (!needle.isEmpty() && !(item.title + ' ' + item.summary + ' ' + item.source).contains(needle, Qt::CaseInsensitive)) continue;
-            if (needle.isEmpty() && (shown >= total || perSourceCount[item.source] >= perSource)) { ++hidden; continue; }
+            if (needle.isEmpty() && newsTopic.isEmpty() && (shown >= total || perSourceCount[item.source] >= perSource)) { ++hidden; continue; }
             ++perSourceCount[item.source];
             const int side = int(std::min_element(weight.begin(), weight.end()) - weight.begin());  // The shortest column takes the next card
             weight[side] += 70 + (item.image.isEmpty() ? 0 : 160) + int(item.title.size()) * 2 + int(item.summary.size());
@@ -1255,7 +1288,7 @@ private:
         QString message;
         newsLoadingBox->setVisible(newsLoading && shown == 0);
         if (newsLoading) message = shown ? "Reloading the news…" : QString();
-        else if (!shown) message = news.isEmpty() ? "Couldn't load the news. " + newsProblems.join("; ") : "No news matches your search.";
+        else if (!shown) message = news.isEmpty() ? "Couldn't load the news. " + newsProblems.join("; ") : "No news matches your search or topic.";
         else if (!newsProblems.isEmpty()) message = "Not reachable now: " + newsProblems.join("; ");
         newsStatus->setText(message); newsStatus->setVisible(!message.isEmpty());
     }
@@ -1618,7 +1651,15 @@ int main(int argc, char **argv) {
             if (auto *dialog = store.findChild<QDialog *>("orphansDialog")) dialog->close();
         }
         store.previewNews();
-        passed &= store.findChildren<QFrame *>("newsCard").size() == 6 && store.findChildren<QLabel *>("newsFresh").size() == 1;
+        passed &= store.findChildren<QFrame *>("newsCard").size() == 7 && store.findChildren<QLabel *>("newsFresh").size() == 1;
+        {   // Topic pills filter the cards; with none chosen every card shows
+            auto pill = [&store](const QString &topic) -> QPushButton * { for (auto *button : store.findChildren<QPushButton *>("newsTopic")) if (button->property("topic").toString() == topic) return button; return nullptr; };
+            passed &= pill("Security") && pill("Linux") && pill("Hardware") && !pill("Apps") && !pill("Security")->isChecked();
+            pill("Security")->click();
+            passed &= store.findChildren<QFrame *>("newsCard").size() == 1 && pill("Security")->isChecked();
+            pill("Linux")->click(); passed &= store.findChildren<QFrame *>("newsCard").size() == 5 && !pill("Security")->isChecked();
+            pill("Linux")->click(); passed &= store.findChildren<QFrame *>("newsCard").size() == 7 && !pill("Linux")->isChecked();
+        }
         store.findChild<QLineEdit *>("newsSearch")->setText("plasma");
         passed &= store.findChildren<QFrame *>("newsCard").size() == 1;
         store.findChild<QLineEdit *>("newsSearch")->setText("");
@@ -2061,6 +2102,17 @@ int main(int argc, char **argv) {
         source->setCurrentText("AppImage"); passed &= installed->count() == 0 && installed->isHidden();
         source->setCurrentIndex(0); search->setText("firefox"); passed &= installed->count() == 1;
         passed &= store.backend.installed[installed->item(0)->data(Qt::UserRole).toInt()].name == "Firefox";
+        {   // A long list keeps live widgets only near the screen, and builds the rest while scrolling
+            QScrollArea area; auto *body = new QWidget; auto *column = new QVBoxLayout(body); auto *many = new AppList; many->windowed = true; column->addWidget(many);
+            area.setWidget(body); area.setWidgetResizable(true); area.resize(900, 600); area.show();
+            for (int i = 0; i < 300; ++i) many->addApp(QString("App %1").arg(i, 3, 10, QChar('0')), "Summary", QIcon(), i, "Repo", nullptr, "id", true, "Repo");
+            many->fitRows(); settle();
+            auto live = [many] { int n = 0; for (int i = 0; i < many->count(); ++i) n += many->itemWidget(many->item(i)) != nullptr; return n; };
+            passed &= live() > 0 && live() < 60 && many->itemWidget(many->item(0)) && !many->itemWidget(many->item(299));
+            area.verticalScrollBar()->setValue(area.verticalScrollBar()->maximum()); settle();
+            passed &= live() < 60 && many->itemWidget(many->item(299)) && !many->itemWidget(many->item(0));
+            fprintf(stdout, "Windowed list: %d of %d rows live\n", live(), many->count());
+        }
         search->clear(); settle();
         passed &= installed->visualItemRect(installed->item(installed->count() - 1)).bottom() < installed->viewport()->height();
         auto mouseHistory = [&store](Qt::MouseButton button) {
@@ -2102,17 +2154,6 @@ int main(int argc, char **argv) {
     static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->advance(qBound(0, parser.value("carousel-slide").toInt(), 2));
     if (parser.isSet("explore-filters")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->filters->setChecked(true);
     if (parser.isSet("compact")) store.resize(760, 800);
-        {   // A long list keeps live widgets only near the screen, and builds the rest while scrolling
-            QScrollArea area; auto *body = new QWidget; auto *column = new QVBoxLayout(body); auto *many = new AppList; many->windowed = true; column->addWidget(many);
-            area.setWidget(body); area.setWidgetResizable(true); area.resize(900, 600); area.show();
-            for (int i = 0; i < 300; ++i) many->addApp(QString("App %1").arg(i, 3, 10, QChar('0')), "Summary", QIcon(), i, "Repo", nullptr, "id", true, "Repo");
-            many->fitRows(); settle();
-            auto live = [many] { int n = 0; for (int i = 0; i < many->count(); ++i) n += many->itemWidget(many->item(i)) != nullptr; return n; };
-            passed &= live() > 0 && live() < 60 && many->itemWidget(many->item(0)) && !many->itemWidget(many->item(299));
-            area.verticalScrollBar()->setValue(area.verticalScrollBar()->maximum()); settle();
-            passed &= live() < 60 && many->itemWidget(many->item(299)) && !many->itemWidget(many->item(0));
-            fprintf(stdout, "Windowed list: %d of %d rows live\n", live(), many->count());
-        }
     if (parser.isSet("details-app")) {
         auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
         for (const auto &app : store.backend.apps) if (app.key == parser.value("details-app").toLower()) explore->openPreview(app);

@@ -102,22 +102,47 @@ static QString fullSizeImage(QString url) {
     return url;
 }
 
+const QStringList newsTopicNames = {"Security", "Gaming", "Desktop", "Hardware", "Apps", "Linux"};
+
+QStringList newsTopics(const QString &source, const QString &title, const QString &summary, const QStringList &feedCategories) {
+    static const QHash<QString, QString> bySource{{"GamingOnLinux", "Gaming"}, {"KDE", "Desktop"}, {"Linux kernel", "Linux"}, {"Arch Linux", "Linux"},
+        {"CachyOS", "Linux"}, {"Linux Mint", "Linux"}, {"Blender", "Apps"}, {"Krita", "Apps"}, {"Godot", "Apps"}, {"LibreOffice", "Apps"}, {"Flathub", "Apps"}, {"Fedora Magazine", "Linux"}, {"OMG! Ubuntu", "Linux"}};
+    static const QList<QPair<QString, QRegularExpression>> rules = [] {
+        const auto rule = [](const char *topic, const char *words) { return qMakePair(QString(topic), QRegularExpression(QString("(?<![a-z])(?:%1)").arg(words), QRegularExpression::CaseInsensitiveOption)); };
+        return QList<QPair<QString, QRegularExpression>>{
+            rule("Security", "security|cve-\\d|vulnerab|exploit|malware|ransomware|backdoor|zero-day|0-day|privilege escalation|breach|phishing|cyber"),
+            rule("Gaming", "gam(?:e|es|ing)(?![a-z])|steam|proton|wine(?![a-z])|lutris|heroic|gamescope|vulkan|esports|gog(?![a-z])|valve"),
+            rule("Desktop", "kde|gnome|plasma|xfce|cinnamon|cosmic|wayland|hyprland|x11|desktop|wm(?![a-z])"),
+            rule("Linux", "kernel|linux \\d+\\.\\d+|ubuntu|fedora|debian|arch linux|manjaro|opensuse|linux mint|nixos|cachyos|distro|endeavouros|pop!_os"),
+            rule("Hardware", "hardware|amd|nvidia|intel|gpu|radeon|mesa|laptop|risc-v|raspberry|firmware|driver"),
+            rule("Apps", "firefox|thunderbird|libreoffice|vlc|obs studio|gimp|krita|blender|chrome|browser|flatpak|appimage")};
+    }();
+    const QString text = title + ' ' + summary + ' ' + feedCategories.join(' ');
+    QStringList topics;
+    if (bySource.contains(source)) topics << bySource.value(source);
+    for (const auto &rule : rules) if (!topics.contains(rule.first) && rule.second.match(text).hasMatch()) topics << rule.first;
+    if (topics.isEmpty()) topics << "Linux";  // Kernel, distributions and everything else
+    return topics;
+}
+
 QList<NewsItem> parseFeed(const QByteArray &xml, const QString &source, bool important) {
     QList<NewsItem> items;
     QXmlStreamReader reader(xml);
-    NewsItem item; bool inItem = false;
+    NewsItem item; bool inItem = false; QStringList tags;
     auto finish = [&] {
         if (item.image.isEmpty()) item.image = firstImage(item.summary);
         item.image = fullSizeImage(item.image);
         item.summary = plainDescription(item.summary).remove(QChar::ObjectReplacementCharacter).simplified();
         if (item.summary.size() > 220) item.summary = item.summary.left(217).trimmed() + "…";
+        item.topics = newsTopics(item.source, item.title, item.summary, tags);
         if (!item.title.isEmpty() && item.url.startsWith("http")) items.append(item);
     };
     while (!reader.atEnd()) {
         reader.readNext();
         if (reader.isStartElement()) {
             const QString name = reader.name().toString();
-            if (name == "item") { inItem = true; item = {}; item.source = source; item.important = important; }
+            if (name == "item") { inItem = true; item = {}; tags.clear(); item.source = source; item.important = important; }
+            else if (inItem && name == "category") tags << reader.readElementText().simplified();
             else if (inItem && name == "title") item.title = reader.readElementText().simplified();
             else if (inItem && name == "link") item.url = reader.readElementText().trimmed();
             else if (inItem && name == "description") item.summary = reader.readElementText();
@@ -143,6 +168,7 @@ QList<NewsItem> parseCachyBlog(const QString &html) {
         NewsItem item; item.source = "CachyOS"; item.important = true;
         item.date = QLocale::c().toDateTime(match.captured(1).trimmed(), "MMM d, yyyy");
         item.url = "https://cachyos.org" + match.captured(2); item.title = plainDescription(match.captured(3)).simplified(); item.summary = plainDescription(match.captured(4)).simplified();
+        item.topics = newsTopics(item.source, item.title, item.summary, {});
         items.append(item);
     }
     return items;
@@ -933,6 +959,12 @@ void Backend::loadNews(std::function<void(QList<NewsItem>, QStringList)> done) {
         {"Fedora Magazine", "https://fedoramagazine.org/feed/", false, false},
         {"Linuxiac", "https://linuxiac.com/feed/", false, false},
         {"It's FOSS", "https://itsfoss.com/news/rss/", false, false},
+        {"Linux Mint", "https://blog.linuxmint.com/?feed=rss2", false, false},
+        {"Blender", "https://www.blender.org/feed/", false, false},
+        {"Krita", "https://krita.org/en/feed/", false, false},
+        {"Godot", "https://godotengine.org/rss.xml", false, false},
+        {"LibreOffice", "https://blog.documentfoundation.org/feed/", false, false},
+        {"Flathub", "https://docs.flathub.org/blog/rss.xml", false, false},
     };
     auto items = std::make_shared<QList<NewsItem>>();
     auto problems = std::make_shared<QStringList>();

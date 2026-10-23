@@ -309,6 +309,17 @@ int main(int argc, char **argv) {
     // News
     const auto feed = parseFeed("<rss><channel><item><title>Manual intervention needed</title><link>https://archlinux.org/news/x/</link><pubDate>Mon, 13 Oct 2025 12:00:00 +0000</pubDate><description>&lt;p&gt;Do this &lt;b&gt;first&lt;/b&gt;.&lt;/p&gt;</description></item><item><title>No link</title></item></channel></rss>", "Arch Linux", true);
     assert(feed.size() == 1 && feed[0].summary == "Do this first." && feed[0].important && feed[0].date.date() == QDate(2025, 10, 13) && feed[0].source == "Arch Linux");
+    {   // Topics come from the source, the feed's own categories and the words of the article
+        auto has = [](const QStringList &topics, const char *topic) { return topics.contains(topic); };
+        assert(newsTopics("Blender", "Blender 5.1 released", "", {}) == QStringList{"Apps"});
+        assert(newsTopics("GamingOnLinux", "Hades II arrives", "", {}) == QStringList{"Gaming"});
+        assert(newsTopics("Phoronix", "Linux 7.2 fixes a privilege escalation flaw in the kernel", "", {}) == QStringList({"Security", "Linux"}));
+        assert(has(newsTopics("LWN.net", "A new release", "", {"Hardware"}), "Hardware"));
+        assert(newsTopics("LWN.net", "A look at sched_ext", "", {}) == QStringList{"Linux"} && newsTopics("Arch Linux", "Manual intervention", "", {}) == QStringList{"Linux"});
+        assert(!has(newsTopics("LWN.net", "Programming with Rust", "", {}), "Gaming") && !has(newsTopics("LWN.net", "Teamwork in open source", "", {}), "Hardware"));
+        const auto tagged = parseFeed("<rss><channel><item><title>A story</title><link>https://x.org/a</link><category>Security</category></item></channel></rss>", "9to5Linux", false);
+        assert(tagged.size() == 1 && tagged[0].topics == QStringList{"Security"});
+    }
     const auto blog = parseCachyBlog("<li><article><time datetime=\"2026-08-09\">Aug 9, 2026</time> · <a href=\"/category/release\">release</a><h2 class=\"x\"><a class=\"y\" href=\"/blog/2608-august-release\">CachyOS August 2026 Release</a></h2><p class=\"z\">Shelly Rewrite</p></article></li>");
     assert(blog.size() == 1 && blog[0].url == "https://cachyos.org/blog/2608-august-release" && blog[0].date.date() == QDate(2026, 8, 9) && blog[0].summary == "Shelly Rewrite");
     // The update script, run with stand-ins for pacman, paru, flatpak, curl and this program
