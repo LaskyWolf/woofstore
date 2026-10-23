@@ -36,6 +36,7 @@ public:
     void addApp(const QString &name, const QString &summary, const QIcon &icon, int key, const QString &metadata = {}, PreviewOperations *operations = nullptr, const QString &id = {}, bool installed = false, const QString &badge = {}, bool reinstall = true) {
         auto *item = new QListWidgetItem(name + '\n' + summary, this);
         item->setData(Qt::UserRole, key); item->setData(Qt::AccessibleTextRole, name + ". " + summary + ". " + metadata);
+        auto build = [=]() -> QWidget * {
         auto *row = new QWidget; auto *layout = new QHBoxLayout(row); layout->setContentsMargins(8, 0, 8, 0); layout->setSpacing(12);
         auto *symbol = new QLabel; symbol->setFixedSize(40, 40); symbol->setPixmap(icon.pixmap(40, 40)); layout->addWidget(symbol, 0, Qt::AlignVCenter);
         auto *copy = new QVBoxLayout; copy->setSpacing(5); copy->addStretch();
@@ -80,19 +81,54 @@ public:
             button->setIcon(QIcon::fromTheme("system-software-install"));
             operations->bind(button, id, name, "Install"); layout->addWidget(button);
         }
-        setItemWidget(item, row);
+        return row;
+        };
+        if (windowed) builders.insert(item, build);
+        setItemWidget(item, build());
     }
+    // A page with hundreds of rows keeps real widgets only for the rows near the screen: every live widget is laid out and walked on each scroll frame.
+    bool windowed = false;
+    void clearApps() { builders.clear(); clear(); }
     void fitRows() {
-        int height = 28;
+        for (int i = 0; i < count(); ++i) if (auto *row = itemWidget(item(i))) measure(item(i), row);
+        applyHeight(); syncRows();
+    }
+    void syncRows() {
+        if (!windowed || !scroll) return;
+        const int top = viewport()->mapFromGlobal(scroll->viewport()->mapToGlobal(QPoint(0, 0))).y(), span = scroll->viewport()->height();
+        bool measured = false;
         for (int i = 0; i < count(); ++i) {
-            auto *row = itemWidget(item(i));
-            // The outer scrollbar can shrink the viewport after Qt caches index-widget geometry.
-            row->setFixedWidth(qMax(1, viewport()->width()));
-            const int rowHeight = qMax(56, row->layout()->totalHeightForWidth(qMax(1, viewport()->width())));
-            item(i)->setSizeHint(QSize(0, rowHeight)); height += rowHeight + spacing() * 2;
+            auto *entry = item(i); const QRect rect = visualItemRect(entry);
+            const bool near = rect.bottom() >= top - span && rect.top() <= top + 2 * span;
+            auto *row = itemWidget(entry);
+            if (near && !row && builders.contains(entry)) { row = builders.value(entry)(); setItemWidget(entry, row); measured |= measure(entry, row); }
+            else if (!near && row) removeItemWidget(entry);
         }
-        setFixedHeight(qMax(1, height)); setVisible(count() > 0);
+        if (measured) applyHeight();
     }
 protected:
     void resizeEvent(QResizeEvent *event) override { QListWidget::resizeEvent(event); fitRows(); }
+    void showEvent(QShowEvent *event) override {
+        QListWidget::showEvent(event);
+        for (QWidget *parent = parentWidget(); parent && !scroll; parent = parent->parentWidget()) scroll = qobject_cast<QScrollArea *>(parent);
+        if (scroll && !hooked) { hooked = true; connect(scroll->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { syncRows(); });
+            scroll->viewport()->installEventFilter(new EventHook(this, [this](QObject *, QEvent *event) { if (event->type() == QEvent::Resize) QTimer::singleShot(0, this, [this] { syncRows(); }); }));
+        }
+        syncRows();
+    }
+private:
+    QPointer<QScrollArea> scroll; bool hooked = false;
+    QHash<QListWidgetItem *, std::function<QWidget *()>> builders;
+    // The outer scrollbar can shrink the viewport after Qt caches index-widget geometry. True when the row's height changed.
+    bool measure(QListWidgetItem *entry, QWidget *row) {
+        row->setFixedWidth(qMax(1, viewport()->width()));
+        const int rowHeight = qMax(56, row->layout()->totalHeightForWidth(qMax(1, viewport()->width())));
+        const bool changed = entry->sizeHint().height() != rowHeight;
+        entry->setSizeHint(QSize(0, rowHeight)); return changed;
+    }
+    void applyHeight() {
+        int height = 28;
+        for (int i = 0; i < count(); ++i) height += qMax(56, item(i)->sizeHint().height()) + spacing() * 2;
+        setFixedHeight(qMax(1, height)); setVisible(count() > 0);
+    }
 };

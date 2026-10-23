@@ -917,7 +917,7 @@ private:
         sticky->fit();
         installedLabel = label("Loading installed software…", 0, true);
         content->addWidget(installedLabel);
-        installedList = new AppList; installedList->setObjectName("installedApps"); installedList->setAccessibleName("Installed apps, alphabetically sorted"); content->addWidget(installedList);
+        installedList = new AppList; installedList->windowed = true; installedList->setObjectName("installedApps"); installedList->setAccessibleName("Installed apps, alphabetically sorted"); content->addWidget(installedList);
         installedEmpty = new QWidget; installedEmpty->setObjectName("installedEmpty"); installedEmpty->setMinimumHeight(300);
         auto *emptyLayout = new QVBoxLayout(installedEmpty); emptyLayout->setSpacing(10); emptyLayout->setAlignment(Qt::AlignCenter);
         auto *emptyIcon = new QLabel; emptyIcon->setAlignment(Qt::AlignCenter);
@@ -1387,7 +1387,7 @@ private:
     void renderInstalled() {
         if (!installedList || !installedSearch || !installedFilter) return;
         displayedInstalled = backend.installed;
-        installedList->clear();
+        installedList->clearApps();
         const QString query = installedSearch->text().trimmed(), source = installedFilter->currentText();
         QList<int> matches;
         for (int i = 0; i < displayedInstalled.size(); ++i) {
@@ -2102,6 +2102,17 @@ int main(int argc, char **argv) {
     static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->advance(qBound(0, parser.value("carousel-slide").toInt(), 2));
     if (parser.isSet("explore-filters")) static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"))->filters->setChecked(true);
     if (parser.isSet("compact")) store.resize(760, 800);
+        {   // A long list keeps live widgets only near the screen, and builds the rest while scrolling
+            QScrollArea area; auto *body = new QWidget; auto *column = new QVBoxLayout(body); auto *many = new AppList; many->windowed = true; column->addWidget(many);
+            area.setWidget(body); area.setWidgetResizable(true); area.resize(900, 600); area.show();
+            for (int i = 0; i < 300; ++i) many->addApp(QString("App %1").arg(i, 3, 10, QChar('0')), "Summary", QIcon(), i, "Repo", nullptr, "id", true, "Repo");
+            many->fitRows(); settle();
+            auto live = [many] { int n = 0; for (int i = 0; i < many->count(); ++i) n += many->itemWidget(many->item(i)) != nullptr; return n; };
+            passed &= live() > 0 && live() < 60 && many->itemWidget(many->item(0)) && !many->itemWidget(many->item(299));
+            area.verticalScrollBar()->setValue(area.verticalScrollBar()->maximum()); settle();
+            passed &= live() < 60 && many->itemWidget(many->item(299)) && !many->itemWidget(many->item(0));
+            fprintf(stdout, "Windowed list: %d of %d rows live\n", live(), many->count());
+        }
     if (parser.isSet("details-app")) {
         auto *explore = static_cast<ExplorePage *>(store.findChild<QWidget *>("explorePrototype"));
         for (const auto &app : store.backend.apps) if (app.key == parser.value("details-app").toLower()) explore->openPreview(app);
