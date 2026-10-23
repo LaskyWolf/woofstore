@@ -24,7 +24,7 @@ Explore shows the real catalogue: Flathub, every pacman repository including Cac
 
 Installed lists the apps in the application menu like the Start menu, with the source of each (Flatpak, Arch, AUR / local, AppImage, Other). Add AppImage and Add Flatpak accept files by click or drop and use the normal install window.
 
-Updates checks Arch, AUR, Flatpak and AppImage updates at start and on demand. System Update updates everything in one run: a full pacman upgrade, then the AUR, Flatpak and AppImages. The run continues if the store closes or crashes, and the store restarts itself after a system upgrade. A failed system upgrade stops the run. A new kernel triggers a desktop notification that offers to restart.
+Updates checks Arch, AUR, Flatpak and AppImage updates at start and on demand. System Update updates everything in one run: a full pacman upgrade, then the AUR, Flatpak and AppImages, then cache cleanup and a list of services to restart. The run continues if the store closes or crashes, and the store restarts itself after a system upgrade. A failed system upgrade stops the run. A new kernel triggers a desktop notification that offers to restart.
 
 News shows Arch Linux, CachyOS, Linux kernel, KDE, LWN.net, 9to5Linux and Phoronix items in two columns; unread Arch Linux and CachyOS items badge the sidebar.
 

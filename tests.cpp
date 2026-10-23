@@ -329,7 +329,7 @@ int main(int argc, char **argv) {
         stub("woof", "echo \"woof $*\" >> \"$LOG\"\n");
         QStringList names;
         const QString full = updateScript(true, true, true, true, true, &names);
-        assert(names == QStringList({"System packages", "AUR packages", "Flatpak apps", "AppImages", "Orphan packages"}));
+        assert(names == QStringList({"System packages", "AUR packages", "Flatpak apps", "AppImages", "Orphan packages", "Cache and services"}));
         const QString image = "abc\thttps://x/Foo.AppImage\tFoo/Bar";
         auto ok = run(full, {image});
         assert(ok.first == 0 && ok.second.indexOf("pkexec pacman -Syu --noconfirm") < ok.second.indexOf("paru -Sua --noconfirm --skipreview --devel")
@@ -343,6 +343,25 @@ int main(int argc, char **argv) {
         qunsetenv("FAIL_PARU");
         const QString onlyApps = updateScript(false, false, false, true, false, &names);
         assert(names == QStringList({"Flatpak apps"}) && !onlyApps.contains("pacman") && !onlyApps.contains("paru") && run(onlyApps, {}).second == "flatpak update -y --noninteractive\n");
+        {   // The root step after the upgrade: cache trimmed, services listed (not restarted), and its output is what the store reads
+            stub("pkexec", "if [ \"$1\" = bash ]; then shift; exec bash \"$@\"; fi; echo \"pkexec $*\" >> \"$LOG\"\n");  // Runs the root script as the test user
+            stub("paccache", "echo \"paccache $*\" >> \"$LOG\"; echo '==> finished: 2 packages removed'\n");
+            stub("checkservices", "echo \"checkservices $*\" >> \"$LOG\"; echo \"Service 'dbus-broker.service' needs a restart\"; echo \"Service 'bluetooth.service' needs a restart\"; echo \"Service 'bluetooth.service' again\"\n");
+            QFile::remove(log);
+            QProcess p; auto env = QProcessEnvironment::systemEnvironment(); env.insert("PATH", bin.path() + ":" + env.value("PATH")); env.insert("LOG", log); p.setProcessEnvironment(env);
+            p.start("bash", QStringList{"-c", updateScript(true, false, false, false, false, &names), "x", bin.path() + "/woof"}); p.waitForFinished(20000);
+            const QString out = QString::fromUtf8(p.readAllStandardOutput());
+            QFile f(log); const QString calls = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+            assert(p.exitCode() == 0 && out.contains("==> Cache and services") && out.contains("2 packages removed"));
+            assert(calls.contains("paccache -rk3\n") && calls.contains("paccache -ruk0\n") && calls.indexOf("paccache -rk3") < calls.indexOf("checkservices"));
+            assert(calls.contains("checkservices -F -P -R -i gdm.service") && calls.contains("-i sddm.service") && !calls.contains("restart"));  // Listing only, display managers ignored
+            assert(parseServicesToRestart(out) == QStringList({"dbus-broker.service", "bluetooth.service"}));  // Names as the store parses them, once each
+            // pkexec itself refused for the last step (the password prompt was cancelled): the run is not failed by it
+            stub("pkexec", "if [ \"$1\" = bash ]; then exit 126; fi; echo \"pkexec $*\" >> \"$LOG\"\n");
+            QProcess q; q.setProcessEnvironment(env); q.start("bash", QStringList{"-c", updateScript(true, false, false, false, false, &names), "x", bin.path() + "/woof"}); q.waitForFinished(20000);
+            assert(q.exitCode() == 0 && QString::fromUtf8(q.readAllStandardOutput()).contains("were skipped"));
+        }
+        assert(parseServicesToRestart("x\nneeds-restart: a.service\n  needs-restart: b@1.service  \nneeds-restart: a.service\nneeds-restart: c;rm -rf x.service\nneeds-restart: ../d.service\nneeds-restart: e\n") == QStringList({"a.service", "b@1.service"}));
     }
     {
         // The chroot's pacman.conf keeps the host's repositories and expands mirrorlist includes

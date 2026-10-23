@@ -55,6 +55,8 @@ QList<Orphan> parseOrphans(const QString &text);  // Lines of "name" or "name<TA
 QString importAppImage(const QString &file, const QString &dataRoot, QString *error);
 // The bash script of an update run: $1 is this program, the other arguments are "id<TAB>url<TAB>name" per AppImage. Each step prints "==> <name>" first.
 // A failed system upgrade stops everything; a failed AUR, Flatpak or AppImage step is reported and the script goes on, ending with status 1.
+// Services listed by the update's last step as "needs-restart: name.service" (they run files the upgrade replaced).
+QStringList parseServicesToRestart(const QString &log);
 QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames);
 // The pacman.conf for the AUR build chroot, made from the host's: same repositories and signature levels (so multilib and CachyOS
 // resolve), host-only paths dropped, and every "Include" replaced by that file's Server lines (the chroot has no mirrorlist files of its own).

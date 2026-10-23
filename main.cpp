@@ -498,7 +498,9 @@ public:
             lastResult = ok ? 1 : 2;
             refreshActivity();
             // A system upgrade replaces the libraries this window is running with, so it restarts instead of reading more files from them.
-            if (ok && inventoryEnabled && title == "System Update" && packageJobsIncludeSystem) { restartAfterUpgrade(); return; }
+            if (ok && inventoryEnabled && title == "System Update" && packageJobsIncludeSystem) { afterSystemUpgrade(parseServicesToRestart(*output)); return; }
+            if (ok && inventoryEnabled && title == "Restart services" && restartStoreAfterJob) { restartStoreAfterJob = false; restartAfterUpgrade(); return; }
+            if (!ok) restartStoreAfterJob = false;
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
             if (inventoryEnabled && title.startsWith("Update")) QTimer::singleShot(0, this, &Store::checkForUpdates);
             if (ok && inventoryEnabled && title == "System Update") { QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); }); }
@@ -507,6 +509,36 @@ public:
         dialog->show();
     }
     bool packageJobsIncludeSystem = false;  // The running System Update contains the pacman upgrade
+    bool restartStoreAfterJob = false;      // The service restart that follows the upgrade is running; the store restarts after it
+    // The upgrade replaced files that some services still run old copies of. The user picks which to restart, then the store restarts itself.
+    void afterSystemUpgrade(const QStringList &services) {
+        if (services.isEmpty()) { restartAfterUpgrade(); return; }
+        const QStringList chosen = servicesToRestart(services);
+        restartStoreAfterJob = true;
+        if (chosen.isEmpty() || !startJob("Restart services", "pkexec", QStringList{"systemctl", "restart"} + chosen)) { restartStoreAfterJob = false; restartAfterUpgrade(); }
+    }
+    // Services whose restart would end the session are listed but not ticked.
+    QStringList servicesToRestart(const QStringList &services) {
+        static const QStringList risky{"dbus-broker.service", "dbus.service", "systemd-logind.service", "polkit.service"};
+        QDialog dialog(this); dialog.setObjectName("servicesDialog"); dialog.setWindowTitle("Restart services");
+        auto *layout = new QVBoxLayout(&dialog); layout->setSpacing(12); layout->setSizeConstraint(QLayout::SetMinimumSize);
+        layout->addWidget(label("Restart services", 18, true));
+        auto *hint = label("The upgrade replaced files these services are still running. Restart them to use the new versions. Services marked ⚠ can end your session or the network: a reboot is the safer way to apply them.");
+        hint->setForegroundRole(QPalette::PlaceholderText); hint->setMinimumWidth(460); layout->addWidget(hint);
+        auto *list = new QListWidget; list->setObjectName("serviceList"); list->setMinimumHeight(180);
+        for (const QString &service : services) {
+            const bool danger = risky.contains(service) || service.startsWith("user@");
+            auto *item = new QListWidgetItem(danger ? "⚠ " + service : service, list);
+            item->setData(Qt::UserRole, service); item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(danger ? Qt::Unchecked : Qt::Checked);
+        }
+        layout->addWidget(list, 1);
+        auto *skip = new QPushButton("Not now"); auto *restart = new QPushButton("Restart selected"); restart->setObjectName("servicesRestart"); restart->setDefault(true);
+        auto *buttons = new QHBoxLayout; buttons->addWidget(skip); buttons->addStretch(); buttons->addWidget(restart); layout->addLayout(buttons);
+        connect(skip, &QPushButton::clicked, &dialog, &QDialog::reject); connect(restart, &QPushButton::clicked, &dialog, &QDialog::accept);
+        if (dialog.exec() != QDialog::Accepted) return {};
+        QStringList chosen; for (int i = 0; i < list->count(); ++i) if (list->item(i)->checkState() == Qt::Checked) chosen << list->item(i)->data(Qt::UserRole).toString();
+        return chosen;
+    }
     void restartAfterUpgrade() {
         QMessageBox::information(this, "System Update finished", "WoofStore restarts now to load the updated libraries.");
         settings.setValue("orphansAfterRestart", true);
@@ -991,7 +1023,7 @@ private:
         if (aur) lines << "• " + count(aur, "AUR package", "AUR packages");
         if (flatpaks) lines << "• " + count(flatpaks, "Flatpak app", "Flatpak apps");
         if (!images.isEmpty()) lines << "• " + count(int(images.size()), "AppImage", "AppImages");
-        lines << "• Orphan packages are listed afterwards, never removed without asking";
+        lines << "• Afterwards: old cached packages are removed (three versions of each stay), services running old files are offered for a restart, and orphan packages are listed, never removed without asking";
         const QString title = "System Update";
         // Important news (manual interventions) published since the last System Update: read them before the upgrade, not after it breaks.
         QStringList headlines;
@@ -1949,7 +1981,7 @@ int main(int argc, char **argv) {
             check(__LINE__, ran.first && ran.second.indexOf("pkexec pacman -Syu --noconfirm") >= 0 && ran.second.indexOf("pkexec pacman -Syu") < ran.second.indexOf("paru -Sua --noconfirm --skipreview")
                 && ran.second.indexOf("paru") < ran.second.indexOf("flatpak update -y --noninteractive") && ran.second.indexOf("flatpak") < ran.second.indexOf("curl") && ran.second.contains("import --import-appimage")
                 && joined.indexOf("==> System packages") < joined.indexOf("==> AUR packages") && joined.indexOf("==> AUR packages") < joined.indexOf("==> Flatpak apps")
-                && joined.indexOf("==> Flatpak apps") < joined.indexOf("==> AppImages") && joined.contains("==> Orphan packages") && store.packageJobs.last().step == 5);
+                && joined.indexOf("==> Flatpak apps") < joined.indexOf("==> AppImages") && joined.contains("==> Orphan packages") && joined.indexOf("==> Orphan packages") < joined.indexOf("==> Cache and services") && store.packageJobs.last().step == 6);
             check(__LINE__, !QFileInfo::exists(Store::jobFolder() + "/job.json"));  // A finished job leaves nothing behind
             qputenv("FAIL_PACMAN", "1");  // A failed system upgrade stops everything and says so
             auto stopped = runAll();
@@ -1981,6 +2013,18 @@ int main(int argc, char **argv) {
             { QElapsedTimer t; t.start(); while ((store.packageJobs.size() == recordsBefore || !store.packageJobs.last().finished) && t.elapsed() < 15000) QApplication::processEvents(QEventLoop::AllEvents, 50); }
             check(__LINE__, store.packageJobs.size() == recordsBefore + 1 && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Orphan packages") && store.packageJobs.last().step == 2);
             { QElapsedTimer t; t.start(); while (store.findChild<QDialog *>("jobDialog") && t.elapsed() < 3000) QApplication::processEvents(QEventLoop::AllEvents, 50); }
+            {   // The list of services to restart: ordinary ones ticked, the ones that can end the session are not
+                auto states = std::make_shared<QStringList>();
+                QTimer::singleShot(300, &store, [&store, states] {
+                    auto *dialog = store.findChild<QDialog *>("servicesDialog");
+                    if (!dialog) return;
+                    auto *list = dialog->findChild<QListWidget *>("serviceList");
+                    for (int i = 0; i < list->count(); ++i) *states << list->item(i)->data(Qt::UserRole).toString() + (list->item(i)->checkState() == Qt::Checked ? ":on" : ":off");
+                    dialog->findChild<QPushButton *>("servicesRestart")->click();
+                });
+                const QStringList chosen = store.servicesToRestart({"bluetooth.service", "dbus-broker.service", "user@1000.service"});
+                check(__LINE__, *states == QStringList({"bluetooth.service:on", "dbus-broker.service:off", "user@1000.service:off"}) && chosen == QStringList({"bluetooth.service"}));
+            }
             qputenv("PATH", oldPath); qunsetenv("LOG");
         }
         {   // A background job reports steps and output without a terminal

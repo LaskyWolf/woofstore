@@ -235,6 +235,31 @@ QString importAppImage(const QString &file, const QString &dataRoot, QString *er
     return dest;
 }
 
+// What runs as root after the upgrade: trim the package cache (three versions of each installed package stay, packages that are gone leave
+// completely) and list the services that run old files. Listing only: restarting is the user's choice. Display managers are never offered,
+// restarting one ends the session.
+static QString postUpgradeScript() {
+    constexpr int keptVersions = 3;
+    QString ignored;
+    for (const char *service : {"gdm", "plasmalogin", "sddm", "lightdm", "lxdm", "slim", "xdm", "greetd", "nodm", "ly", "lemurs"}) ignored += QString(" -i %1.service").arg(service);
+    return QString("echo 'Cleaning the package cache'\n"
+                   "if command -v paccache >/dev/null; then paccache -rk%1; paccache -ruk0; else echo 'paccache is not installed (package pacman-contrib), so the cache was not cleaned.'; fi\n"
+                   "echo 'Checking which services run old files'\n"
+                   "if command -v checkservices >/dev/null; then checkservices -F -P -R%2 2>/dev/null | grep '\\.service' | cut -f2 -d \"'\" | sed 's/^/needs-restart: /'; "
+                   "else echo 'checkservices is not installed, so services were not checked.'; fi\n"
+                   "exit 0\n").arg(keptVersions).arg(ignored);
+}
+
+QStringList parseServicesToRestart(const QString &log) {
+    static const QRegularExpression line("^needs-restart: ([A-Za-z0-9:_.@\\-]+\\.service)$");
+    QStringList services;
+    for (const QString &row : log.split('\n')) {
+        const auto match = line.match(row.trimmed());
+        if (match.hasMatch() && !services.contains(match.captured(1))) services << match.captured(1);
+    }
+    return services;
+}
+
 QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames) {
     QStringList names; QString script = "fail=0\nexe=\"$1\"; shift\n";
     auto section = [&](const QString &name) { names << name; script += "echo '==> " + name + "'\n"; };
@@ -263,6 +288,13 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
     if (system) {
         section("Orphan packages");  // Only reported: removing them is the user's call
         script += "orphans=$(pacman -Qdtq 2>/dev/null); if [ -n \"$orphans\" ]; then echo 'Orphan packages (nothing needs them any more):'; echo \"$orphans\"; echo 'Remove them with: sudo pacman -Rns $(pacman -Qdtq)'; else echo 'No orphan packages.'; fi\n";
+    }
+    if (system) {
+        section("Cache and services");
+        // One root session for both jobs, so the password is asked once more, not twice. A failure here is reported but does not fail the run:
+        // the packages are already updated.
+        script += "post=$(cat <<'EOS'\n" + postUpgradeScript() + "EOS\n)\n"
+                  "pkexec bash -c \"$post\" || echo '==> The cache cleanup and the service check were skipped.'\n";
     }
     script += "exit $fail\n";
     if (stepNames) *stepNames = names;
