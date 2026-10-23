@@ -110,3 +110,25 @@ QT_QPA_PLATFORM=offscreen ./build/woof-store --explore-bottom --screenshot /tmp/
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## Sources and credits
+
+Software and data:
+
+- [Flathub](https://flathub.org) and [Flatpak](https://flatpak.org): Flatpak apps, their popularity and update checks.
+- The Arch Linux and [CachyOS](https://cachyos.org) package repositories, through `pacman`; names, icons and screenshots of repository apps come from `archlinux-appstream-data`.
+- The [AUR](https://aur.archlinux.org): package list and details; built with [paru](https://github.com/Morganamilo/paru) and, for a clean chroot, `devtools`.
+- [pkgstats](https://pkgstats.archlinux.de): popularity of repository packages.
+- [ODRS](https://odrs.gnome.org): app ratings.
+- AppImage publishers: update information and release files, read through `api.github.com`.
+- The GitHub releases of [WoofStore](https://github.com/LaskyWolf/woofstore/releases): updates of the store itself.
+- DuckDuckGo: a short description for an installed app that no package database knows.
+
+Update tools:
+
+- [cachy-update](https://github.com/CachyOS/cachy-update) and [arch-update](https://github.com/Antiz96/arch-update): the model for System Update (news before upgrading, cache cleanup, service restarts, orphan packages, restart after a kernel update). WoofStore does not use their code or call them.
+- `pacman-contrib` (`checkupdates`, `paccache`, `checkservices`) and `expac`.
+
+News feeds: [Arch Linux](https://archlinux.org/news/), [CachyOS](https://cachyos.org/blog/), [Linux kernel](https://www.kernel.org), [KDE](https://kde.org/announcements/), [LWN.net](https://lwn.net), [9to5Linux](https://9to5linux.com), [Phoronix](https://www.phoronix.com), [GamingOnLinux](https://www.gamingonlinux.com), [OMG! Ubuntu](https://www.omgubuntu.co.uk), [Fedora Magazine](https://fedoramagazine.org), [Linuxiac](https://linuxiac.com), [It's FOSS](https://itsfoss.com), [Linux Mint](https://blog.linuxmint.com), [Blender](https://www.blender.org), [Krita](https://krita.org), [Godot](https://godotengine.org), [LibreOffice](https://blog.documentfoundation.org) and [Flathub](https://docs.flathub.org/blog).
+
+Built with [Qt 6](https://www.qt.io), KDE Frameworks (KCoreAddons, KParts), [AppStream](https://www.freedesktop.org/wiki/Distributions/AppStream/), Breeze icons and glyphs from [Lucide](https://lucide.dev).
