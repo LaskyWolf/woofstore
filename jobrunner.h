@@ -29,6 +29,12 @@ inline QString jobRunnerScript() {
            "echo $? > \"$dir/job.exit.tmp\" && mv \"$dir/job.exit.tmp\" \"$dir/job.exit\"\n";
 }
 
+// True when /proc/<pid>/maps lists a system file as "(deleted)": the program runs from a library or executable that a package upgrade has replaced.
+inline bool runsReplacedFiles(const QByteArray &maps) {
+    for (const QByteArray &line : maps.split('\n')) if (line.endsWith(" (deleted)") && line.contains(" /usr/")) return true;
+    return false;
+}
+
 inline QByteArray readSmallFile(const QString &path) { QFile file(path); return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray(); }
 
 inline bool runnerAlive(const QString &dir) {

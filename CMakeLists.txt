@@ -15,7 +15,7 @@ target_link_libraries(store-core PUBLIC Qt6::Widgets Qt6::Network Qt6::Concurren
 target_compile_options(store-core PRIVATE -Wall -Wextra -Wpedantic)
 add_executable(woof-store main.cpp)
 # Checks and screenshot previews read the small test catalogue from the source tree.
-target_compile_definitions(woof-store PRIVATE WOOFSTORE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+target_compile_definitions(woof-store PRIVATE WOOFSTORE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures" WOOFSTORE_ICON="${CMAKE_CURRENT_SOURCE_DIR}/icons/io.github.laskywolf.WoofStore.svg")
 target_link_libraries(woof-store PRIVATE store-core Qt6::DBus KF6::CoreAddons KF6::Parts)
 target_compile_options(woof-store PRIVATE -Wall -Wextra -Wpedantic)
 include(CTest)

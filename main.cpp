@@ -62,7 +62,7 @@ public:
     }
     explicit Store(bool loadCatalogue = true) : inventoryEnabled(loadCatalogue) {
         setWindowTitle("WoofStore");
-        setWindowIcon(QIcon::fromTheme("io.github.laskywolf.WoofStore", QIcon::fromTheme("system-software-install")));
+        setWindowIcon(QIcon::fromTheme("io.github.laskywolf.WoofStore", QIcon(WOOFSTORE_ICON)));  // A build that is not installed has no theme icon yet
         resize(1180, 850);
         setMinimumSize(720, 580);
         auto *root = new QWidget;
@@ -543,7 +543,13 @@ public:
         QStringList chosen; for (int i = 0; i < list->count(); ++i) if (list->item(i)->checkState() == Qt::Checked) chosen << list->item(i)->data(Qt::UserRole).toString();
         return chosen;
     }
+    // Restarts only when this process runs from files the upgrade replaced; otherwise it carries on and refreshes its lists.
     void restartAfterUpgrade() {
+        if (!runsReplacedFiles(readSmallFile("/proc/self/maps"))) {
+            settling = true; backend.loadInstalled();
+            QTimer::singleShot(0, this, &Store::checkForUpdates); QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); });
+            return;
+        }
         QMessageBox::information(this, "System Update finished", "WoofStore restarts now to load the updated libraries.");
         settings.setValue("orphansAfterRestart", true); settings.setValue("pageAfterRestart", 2);  // Back to Updates
         QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");  // pacman replaced the file this process started from

@@ -306,6 +306,11 @@ int main(int argc, char **argv) {
     const auto asset = pickReleaseAsset(R"({"tag_name":"v2.0","assets":[{"name":"Foo-2.0-x86_64.AppImage","browser_download_url":"https://x/Foo-2.0-x86_64.AppImage"},{"name":"Foo-2.0-x86_64.AppImage.zsync","browser_download_url":"https://x/Foo-2.0-x86_64.AppImage.zsync"},{"name":"Other.AppImage","browser_download_url":"https://x/o"}]})", updateInfo->pattern);
     assert(asset.url == "https://x/Foo-2.0-x86_64.AppImage" && asset.zsyncUrl.endsWith(".zsync") && asset.version == "v2.0");
     assert(pickReleaseAsset("{}", "*").url.isEmpty());
+    {   // A restart is needed only when the running program's own files were replaced by an upgrade
+        assert(!runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/lib/libQt6Core.so.6.10\n7f01 rw-p 00000000 00:00 0\n7f02 r--s 0 00:01 2  /memfd:x (deleted)\n7f03 r--p 0 00:1b 3  /home/u/old (deleted)\n"));
+        assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/lib/libQt6Core.so.6.10 (deleted)\n"));
+        assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/bin/woof-store (deleted)\n"));
+    }
     // News
     const auto feed = parseFeed("<rss><channel><item><title>Manual intervention needed</title><link>https://archlinux.org/news/x/</link><pubDate>Mon, 13 Oct 2025 12:00:00 +0000</pubDate><description>&lt;p&gt;Do this &lt;b&gt;first&lt;/b&gt;.&lt;/p&gt;</description></item><item><title>No link</title></item></channel></rss>", "Arch Linux", true);
     assert(feed.size() == 1 && feed[0].summary == "Do this first." && feed[0].important && feed[0].date.date() == QDate(2025, 10, 13) && feed[0].source == "Arch Linux");
