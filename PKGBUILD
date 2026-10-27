@@ -1,6 +1,6 @@
 # Builds WoofStore from the folder this file is in: makepkg -si
 pkgname=woofstore
-pkgver=1.2.2
+pkgver=1.2.3
 pkgrel=1
 pkgdesc="Software store and system updater for CachyOS and Arch: Flathub, pacman repositories, AUR and AppImages"
 arch=(x86_64)
