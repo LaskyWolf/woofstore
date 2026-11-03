@@ -344,8 +344,9 @@ public:
             startJob(title, QCoreApplication::applicationFilePath(), arguments, {}, {"Prepare", "Copy", "Add to menu"},
                 [](const QString &text) { return text.contains("Adding to the app menu") ? 2 : text.contains("Copying") ? 1 : 0; });
         } else {
-            const QString script = "for f in \"$@\"; do case \"$f\" in *.flatpakref) flatpak install --system -y --noninteractive --from \"$f\";; "
-                "*) flatpak install --system -y --noninteractive --bundle \"$f\";; esac || exit; done";
+            // Installing a file needs an administrator (polkit allows it only after a password), so one pkexec session installs all of them.
+            const QString script = "pkexec bash -c 'for f in \"$@\"; do case \"$f\" in *.flatpakref) flatpak install --system -y --noninteractive --from \"$f\";; "
+                "*) flatpak install --system -y --noninteractive --bundle \"$f\";; esac || exit; done' woof-store-flatpak-files \"$@\"";
             startJob(title, "bash", QStringList{"-c", script, "woof-store-flatpak-files"} + files);
         }
     }
