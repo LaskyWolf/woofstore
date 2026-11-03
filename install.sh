@@ -52,13 +52,15 @@ say "Building and installing woofstore (this takes a few minutes)"
 cd "$work"
 ask_from_tty makepkg -si ${YES:+--noconfirm}
 
-# 4. KRunner and web pages offer "Install this app" as an appstream: link; make the store the program that opens it
+# 4. KRunner and web pages offer "Install this app" as an appstream: link, and Flathub gives .flatpakref files; make the store the program that opens them
 handler=io.github.laskywolf.WoofStore.desktop
-if gio mime x-scheme-handler/appstream "$handler" >/dev/null 2>&1 || xdg-mime default "$handler" x-scheme-handler/appstream >/dev/null 2>&1; then
-  say "KRunner suggestions for apps you do not have now open in WoofStore"
-else
-  echo "Could not set WoofStore as the handler of appstream: links. Run: gio mime x-scheme-handler/appstream $handler"
-fi
+for type in x-scheme-handler/appstream application/vnd.flatpak.ref application/vnd.flatpak; do
+  if gio mime "$type" "$handler" >/dev/null 2>&1 || xdg-mime default "$handler" "$type" >/dev/null 2>&1; then
+    say "$type now opens in WoofStore"
+  else
+    echo "Could not set WoofStore as the handler of $type. Run: gio mime $type $handler"
+  fi
+done
 
 say "Installed WoofStore. Open it from the application menu, or run: woof-store"
 cat <<EOF

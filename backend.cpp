@@ -332,6 +332,19 @@ QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appIm
     return script;
 }
 
+QString flatpakRefId(const QByteArray &ref) {
+    bool inRef = false;
+    for (const QByteArray &raw : ref.split('\n')) {
+        const QByteArray line = raw.trimmed();
+        if (line.startsWith('[')) inRef = line.compare("[Flatpak Ref]", Qt::CaseInsensitive) == 0;
+        else if (inRef && line.startsWith("Name=")) {
+            const QString id = QString::fromUtf8(line.mid(5)).trimmed();
+            return QRegularExpression("^[A-Za-z0-9_.-]+$").match(id).hasMatch() ? id : QString();
+        }
+    }
+    return {};
+}
+
 std::optional<UpdateEntry> parseSelfUpdate(const QByteArray &releaseJson, const QString &current) {
     const QString tag = QJsonDocument::fromJson(releaseJson).object().value("tag_name").toString();
     static const QRegularExpression valid("^v[0-9]+(\\.[0-9]+)*$");

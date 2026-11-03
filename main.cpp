@@ -1080,6 +1080,12 @@ public:
     void openRequest(QString text) {
         raise(); activateWindow(); showNormal();
         text = text.trimmed();
+        // A .flatpakref or .flatpak file (the desktop passes the path or a file: link): the app's page when the catalogue has it, else the file installs as it is.
+        const QUrl file = text.startsWith("file:", Qt::CaseInsensitive) ? QUrl(text) : QUrl::fromLocalFile(text);
+        if (acceptsFile("Flatpak", file)) {
+            if (backend.apps.isEmpty()) { pendingRequest = text; selectPage(0); return; }  // The catalogue is still loading
+            pendingRequest.clear(); openFlatpakFile(file); return;
+        }
         if (text.startsWith("appstream:", Qt::CaseInsensitive)) text = text.mid(10);
         while (text.startsWith('/')) text.remove(0, 1);
         if (text.endsWith(".desktop")) text.chop(8);
@@ -1091,6 +1097,14 @@ public:
         selectPage(0); explore->search->setText(text); explore->applyFilters();
     }
     QString pendingRequest;
+    void openFlatpakFile(const QUrl &file) {
+        const QString path = file.toLocalFile(), id = flatpakRefId(readSmallFile(path));
+        for (const auto &app : backend.apps)
+            if (!id.isEmpty() && !app.componentId.compare(id, Qt::CaseInsensitive)) { selectPage(0); explore->openPreview(app); return; }
+        selectPage(0);
+        const QString name = QFileInfo(path).completeBaseName();
+        if (QMessageBox::question(this, "Install " + name, name + " is not in the catalogue. Install it from this file with Flatpak?\n\n" + path) == QMessageBox::Yes) installFiles("Flatpak", {file});
+    }
 private:
     // Orphans: packages installed as dependencies that nothing needs any more. The user ticks the ones to remove.
 public:
@@ -1647,6 +1661,15 @@ int main(int argc, char **argv) {
             passed &= appImageCard && flatpakCard && offer(appImageCard, {appImage}) && offer(flatpakCard, {flatpakRef});
             passed &= !offer(appImageCard, {flatpakRef}) && !offer(flatpakCard, {appImage}) && !offer(appImageCard, {QUrl("https://example.invalid/app.AppImage")});
             passed &= installed->count() == 3 && !store.findChild<QWidget *>("fileDropOverlay");
+            {   // Opening a .flatpakref of a catalogue app shows its page
+                const auto firefox = fixtureApp(store.backend, "Firefox");
+                QFile ref(droppedFiles.path() + "/firefox.flatpakref");
+                if (ref.open(QIODevice::WriteOnly)) ref.write("[Flatpak Ref]\nTitle=Firefox\nName=" + firefox.componentId.toUtf8() + "\nBranch=stable\n");
+                ref.close();
+                store.selectPage(1); store.openRequest("file://" + ref.fileName());
+                passed &= !firefox.componentId.isEmpty() && details->isVisible() && details->currentId == firefox.key;
+                details->back->click(); store.selectPage(1);
+            }
         }
         store.backend.installedChanged(); passed &= installed->count() == 3;
         passed &= page->loadMore->isHidden();  // The fixture fits in one page

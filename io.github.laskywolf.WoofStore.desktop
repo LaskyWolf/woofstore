@@ -8,5 +8,5 @@ Icon=io.github.laskywolf.WoofStore
 Terminal=false
 StartupNotify=true
 Categories=System;PackageManager;
-MimeType=x-scheme-handler/appstream;
+MimeType=x-scheme-handler/appstream;application/vnd.flatpak.ref;application/vnd.flatpak;
 Keywords=software;store;flatpak;pacman;aur;appimage;update;

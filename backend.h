@@ -63,6 +63,8 @@ QStringList parseServicesToRestart(const QString &log);
 // selfUrl: the source archive of a newer WoofStore release. It is built and installed as the very last step, so a failure there loses nothing else.
 QString updateScript(bool system, bool aur, bool devel, bool flatpak, bool appImages, QStringList *stepNames, const QString &selfUrl = {});
 // GitHub's latest-release answer against the running version: the update entry (source "WoofStore", url = source archive), or none when it is not newer.
+// The application ID a .flatpakref file installs (its Name= line in the [Flatpak Ref] group); empty when there is none.
+QString flatpakRefId(const QByteArray &ref);
 std::optional<UpdateEntry> parseSelfUpdate(const QByteArray &releaseJson, const QString &current);
 // The pacman.conf for the AUR build chroot, made from the host's: same repositories and signature levels (so multilib and CachyOS
 // resolve), host-only paths dropped, and every "Include" replaced by that file's Server lines (the chroot has no mirrorlist files of its own).

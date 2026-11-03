@@ -311,6 +311,8 @@ int main(int argc, char **argv) {
         assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/lib/libQt6Core.so.6.10 (deleted)\n"));
         assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/bin/woof-store (deleted)\n"));
     }
+    assert(flatpakRefId("[Flatpak Ref]\nTitle=Foo\nName=org.foo.Bar\nBranch=stable\n") == "org.foo.Bar");
+    assert(flatpakRefId("[Flatpak Repo]\nName=flathub\n").isEmpty() && flatpakRefId("[Flatpak Ref]\nName=a b; rm\n").isEmpty() && flatpakRefId("").isEmpty());
     // News
     const auto feed = parseFeed("<rss><channel><item><title>Manual intervention needed</title><link>https://archlinux.org/news/x/</link><pubDate>Mon, 13 Oct 2025 12:00:00 +0000</pubDate><description>&lt;p&gt;Do this &lt;b&gt;first&lt;/b&gt;.&lt;/p&gt;</description></item><item><title>No link</title></item></channel></rss>", "Arch Linux", true);
     assert(feed.size() == 1 && feed[0].summary == "Do this first." && feed[0].important && feed[0].date.date() == QDate(2025, 10, 13) && feed[0].source == "Arch Linux");
