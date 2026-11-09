@@ -313,6 +313,11 @@ int main(int argc, char **argv) {
     }
     assert(flatpakRefId("[Flatpak Ref]\nTitle=Foo\nName=org.foo.Bar\nBranch=stable\n") == "org.foo.Bar");
     assert(flatpakRefId("[Flatpak Repo]\nName=flathub\n").isEmpty() && flatpakRefId("[Flatpak Ref]\nName=a b; rm\n").isEmpty() && flatpakRefId("").isEmpty());
+    {   // The log of a finished job outlives the job's own files
+        QTemporaryDir dir; QFile log(dir.path() + "/job.log"); assert(log.open(QIODevice::WriteOnly)); log.write("==> AUR packages\nboom\n"); log.close();
+        keepJobLog(dir.path()); clearJob(dir.path());
+        assert(!QFile::exists(dir.path() + "/job.log") && readSmallFile(dir.path() + "/last-job.log") == "==> AUR packages\nboom\n");
+    }
     // News
     const auto feed = parseFeed("<rss><channel><item><title>Manual intervention needed</title><link>https://archlinux.org/news/x/</link><pubDate>Mon, 13 Oct 2025 12:00:00 +0000</pubDate><description>&lt;p&gt;Do this &lt;b&gt;first&lt;/b&gt;.&lt;/p&gt;</description></item><item><title>No link</title></item></channel></rss>", "Arch Linux", true);
     assert(feed.size() == 1 && feed[0].summary == "Do this first." && feed[0].important && feed[0].date.date() == QDate(2025, 10, 13) && feed[0].source == "Arch Linux");

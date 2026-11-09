@@ -495,7 +495,7 @@ public:
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
             if (dialog) dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
             if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog ? dialog->step : 0, *output, true, ok};
-            clearJob(jobFolder());
+            keepJobLog(jobFolder()); clearJob(jobFolder());
             if (ok && title == "System Update") settings.setValue("lastSystemUpdate", QDate::currentDate().toString(Qt::ISODate));
             if (dialog) { if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show(); }
             if (!ok) jobFailed = true;
@@ -566,7 +566,7 @@ public:
         const bool ok = info.state == JobState::Finished && info.exitCode == 0;
         const QString log = QString::fromUtf8(readSmallFile(jobFolder() + "/job.log"));
         packageActivityHistory.append(info.title + (ok ? " · Done" : " · Failed")); packageJobs.append({info.title, info.steps, ok ? int(info.steps.size()) : 0, log, true, ok});
-        clearJob(jobFolder());
+        keepJobLog(jobFolder()); clearJob(jobFolder());
         backend.loadInstalled(); QTimer::singleShot(0, this, &Store::checkForUpdates);
         auto *box = new QMessageBox(ok ? QMessageBox::Information : QMessageBox::Warning, info.title, ok ? info.title + " finished while WoofStore was closed." :
             info.state == JobState::Interrupted ? info.title + " was interrupted (the computer may have restarted). Run it again: pacman finishes a half-done upgrade on the next run."

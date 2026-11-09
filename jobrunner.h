@@ -56,6 +56,12 @@ inline JobInfo readJob(const QString &dir) {
     return info;
 }
 
+// The output of the last job stays in last-job.log after the job's own files are cleared, so a failed update can still be read afterwards.
+inline void keepJobLog(const QString &dir) {
+    if (!QFile::exists(dir + "/job.log")) return;
+    QFile::remove(dir + "/last-job.log"); QFile::copy(dir + "/job.log", dir + "/last-job.log");
+}
+
 inline void clearJob(const QString &dir) {
     for (const char *name : {"job.json", "job.pid", "job.log", "job.exit", "job.exit.tmp"}) QFile::remove(dir + "/" + name);
 }
