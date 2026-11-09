@@ -956,10 +956,10 @@ void Backend::checkAppImages(std::function<void(QList<UpdateEntry>, QStringList)
             const Local local = watcher->result(); watcher->deleteLater();
             const auto info = parseUpdateInfo(local.info);
             if (!info) { finish(); return; }  // No update information: nothing to compare
-            auto compare = [=](QString zsyncUrl, QString downloadUrl, QString version) {
+            auto compare = [=](QString zsyncUrl, QString downloadUrl, QString version, bool readNameFromHeader) {
                 fetch(QUrl(zsyncUrl), [=](QByteArray header, QString error) {
                     const QString newest = zsyncSha1(header);
-                    const QString target = zsyncDownloadUrl(header, zsyncUrl);  // Nightly builds change their file name, so the address cannot be guessed from the .zsync name
+                    const QString target = readNameFromHeader ? zsyncDownloadUrl(header, zsyncUrl) : QString();  // Nightly builds change their file name, so the address cannot be guessed from the .zsync name
                     if (newest.isEmpty()) problems->append(app.name + ": " + (error.isEmpty() ? "no checksum in the update file" : error));
                     else if (newest != local.sha1) found->append({app.id, app.name, {}, version.isEmpty() ? "newer" : version, "AppImage", target.isEmpty() ? downloadUrl : target});
                     finish();
@@ -967,14 +967,14 @@ void Backend::checkAppImages(std::function<void(QList<UpdateEntry>, QStringList)
             };
             if (!info->zsyncUrl.isEmpty()) {
                 QString download = info->zsyncUrl; download.chop(6);  // name.AppImage.zsync -> name.AppImage
-                compare(info->zsyncUrl, download, {});
+                compare(info->zsyncUrl, download, {}, true);
                 return;
             }
             const QString release = info->tag == "latest" ? "latest" : "tags/" + info->tag;
             fetch(QUrl(QString("https://api.github.com/repos/%1/%2/releases/%3").arg(info->owner, info->repo, release)), [=](QByteArray json, QString error) {
                 const ReleaseAsset asset = pickReleaseAsset(json, info->pattern);
                 if (asset.url.isEmpty()) { problems->append(app.name + ": " + (error.isEmpty() ? "no matching release file" : error)); finish(); return; }
-                compare(asset.zsyncUrl, asset.url, asset.version);
+                compare(asset.zsyncUrl, asset.url, asset.version, false);  // GitHub names the exact file
             });
         });
         const QString path = app.path;
