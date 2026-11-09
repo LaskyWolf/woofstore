@@ -38,6 +38,8 @@ struct UpdateInfo { QString zsyncUrl, owner, repo, tag, pattern; };  // zsyncUrl
 std::optional<UpdateInfo> parseUpdateInfo(const QString &info);
 // The "SHA-1:" line of a .zsync file is the checksum of the newest file; equal to the installed file's checksum means up to date.
 QString zsyncSha1(const QByteArray &header);
+// The file a .zsync file says to download (its URL: line, relative to the .zsync address); empty when it has none or is not http(s).
+QString zsyncDownloadUrl(const QByteArray &header, const QString &zsyncAddress);
 // The release asset matching the publisher's pattern, with the address of its .zsync file; empty when there is none.
 struct ReleaseAsset { QString url, zsyncUrl, version; };
 ReleaseAsset pickReleaseAsset(const QByteArray &releaseJson, const QString &pattern);

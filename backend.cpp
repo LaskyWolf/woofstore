@@ -76,6 +76,14 @@ QString zsyncSha1(const QByteArray &header) {
     return match.hasMatch() ? match.captured(1).toLower() : QString();
 }
 
+QString zsyncDownloadUrl(const QByteArray &header, const QString &zsyncAddress) {
+    static const QRegularExpression line("(?m)^URL:\\s*(\\S+)\\s*$");
+    const auto match = line.match(QString::fromLatin1(header.left(4096)));
+    if (!match.hasMatch()) return {};
+    const QUrl url = QUrl(zsyncAddress).resolved(QUrl(match.captured(1)));
+    return url.isValid() && (url.scheme() == "https" || url.scheme() == "http") ? url.toString() : QString();
+}
+
 ReleaseAsset pickReleaseAsset(const QByteArray &releaseJson, const QString &pattern) {
     const auto release = QJsonDocument::fromJson(releaseJson).object();
     const QRegularExpression wanted(QRegularExpression::wildcardToRegularExpression(pattern));
@@ -951,8 +959,9 @@ void Backend::checkAppImages(std::function<void(QList<UpdateEntry>, QStringList)
             auto compare = [=](QString zsyncUrl, QString downloadUrl, QString version) {
                 fetch(QUrl(zsyncUrl), [=](QByteArray header, QString error) {
                     const QString newest = zsyncSha1(header);
+                    const QString target = zsyncDownloadUrl(header, zsyncUrl);  // Nightly builds change their file name, so the address cannot be guessed from the .zsync name
                     if (newest.isEmpty()) problems->append(app.name + ": " + (error.isEmpty() ? "no checksum in the update file" : error));
-                    else if (newest != local.sha1) found->append({app.id, app.name, {}, version.isEmpty() ? "newer" : version, "AppImage", downloadUrl});
+                    else if (newest != local.sha1) found->append({app.id, app.name, {}, version.isEmpty() ? "newer" : version, "AppImage", target.isEmpty() ? downloadUrl : target});
                     finish();
                 }, 4096);
             };

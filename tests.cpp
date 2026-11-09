@@ -311,6 +311,8 @@ int main(int argc, char **argv) {
         assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/lib/libQt6Core.so.6.10 (deleted)\n"));
         assert(runsReplacedFiles("7f00 r-xp 00000000 00:1b 1  /usr/bin/woof-store (deleted)\n"));
     }
+    assert(zsyncDownloadUrl("zsync: 0.6.2\nFilename: Eden-1.AppImage\nURL: Eden-1.AppImage\nSHA-1: x\n", "https://n.example/latest/Eden.AppImage.zsync") == "https://n.example/latest/Eden-1.AppImage");
+    assert(zsyncDownloadUrl("URL: https://cdn.example/a.AppImage\n", "https://n.example/x.zsync") == "https://cdn.example/a.AppImage" && zsyncDownloadUrl("URL: file:///etc/passwd\n", "https://n.example/x.zsync").isEmpty() && zsyncDownloadUrl("nothing", "https://n.example/x.zsync").isEmpty());
     assert(flatpakRefId("[Flatpak Ref]\nTitle=Foo\nName=org.foo.Bar\nBranch=stable\n") == "org.foo.Bar");
     assert(flatpakRefId("[Flatpak Repo]\nName=flathub\n").isEmpty() && flatpakRefId("[Flatpak Ref]\nName=a b; rm\n").isEmpty() && flatpakRefId("").isEmpty());
     {   // The log of a finished job outlives the job's own files

@@ -490,19 +490,20 @@ public:
             if (code == JobWatcher::stillRunning) return;
             timer->stop(); timer->deleteLater(); jobRunning = false;
             const bool ok = code == 0;
+            const bool systemDone = title == "System Update" && packageJobsIncludeSystem && output->contains("==> Cache and services");  // The upgrade itself finished, whatever the later steps did
             QString lastLines; for (const QString &line : output->split('\n', Qt::SkipEmptyParts).mid(qMax(0, int(output->count('\n')) - 12))) lastLines += line.trimmed() + '\n';
             if (code < 0 && dialog) dialog->feed("The update stopped without finishing (the computer may have restarted). Run it again.");
             if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
-            if (dialog) dialog->finish(ok, ok ? "Done" : "It did not finish. Open the details to see why.");
+            if (dialog) dialog->finish(ok, ok ? "Done" : systemDone ? "The system is updated, but a later step failed. Open the details to see which." : "It did not finish. Open the details to see why.");
             if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog ? dialog->step : 0, *output, true, ok};
             keepJobLog(jobFolder()); clearJob(jobFolder());
-            if (ok && title == "System Update") settings.setValue("lastSystemUpdate", QDate::currentDate().toString(Qt::ISODate));
+            if (systemDone) settings.setValue("lastSystemUpdate", QDate::currentDate().toString(Qt::ISODate));
             if (dialog) { if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show(); }
             if (!ok) jobFailed = true;
             lastResult = ok ? 1 : 2;
             refreshActivity();
             // A system upgrade replaces the libraries this window is running with, so it restarts instead of reading more files from them.
-            if (ok && inventoryEnabled && title == "System Update" && packageJobsIncludeSystem) { afterSystemUpgrade(parseServicesToRestart(*output)); return; }
+            if (inventoryEnabled && systemDone) { afterSystemUpgrade(parseServicesToRestart(*output)); return; }
             if (ok && inventoryEnabled && title == "Update WoofStore") { restartAfterUpgrade(); return; }  // The new version starts instead of the old one
             if (ok && inventoryEnabled && title == "Restart services" && restartStoreAfterJob) { restartStoreAfterJob = false; restartAfterUpgrade(); return; }
             if (!ok) restartStoreAfterJob = false;
