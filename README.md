@@ -1,19 +1,31 @@
-<p align="center"><img src="icons/io.github.laskywolf.WoofStore.svg" alt="WoofStore" width="128"></p>
+<div align="center">
 
-<h1 align="center">WoofStore</h1>
+<img src=".github/assets/banner.svg" width="100%" alt="WoofStore: one store and updater for Arch Linux" />
 
-<p align="center">One software store and system updater for CachyOS and Arch Linux.<br>
-Native Qt 6 / KDE. Flathub, pacman repositories and the AUR in one catalogue.</p>
+[![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt&logoColor=white)](CMakeLists.txt)
+[![KDE](https://img.shields.io/badge/desktop-KDE-1d99f3?logo=kde&logoColor=white)](https://kde.org)
+[![Arch Linux](https://img.shields.io/badge/Arch-CachyOS-1793d1?logo=archlinux&logoColor=white)](https://cachyos.org)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-<p align="center"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></p>
+**One software store and system updater for CachyOS and Arch Linux.**
+Flathub, pacman repositories and the AUR in one catalogue.
 
-![Explore](previews/explore.png)
+<img src="previews/explore.png" width="31%" alt="Explore" />&nbsp;
+<img src="previews/installed.png" width="31%" alt="Installed" />&nbsp;
+<img src="previews/updates.png" width="31%" alt="Updates" />
 
-| Installed | Updates | News |
-|---|---|---|
-| ![Installed](previews/installed.png) | ![Updates](previews/updates.png) | ![News](previews/news.png) |
+<sub>Screenshots use the small sample catalogue of the test suite.</sub>
 
-Screenshots use the small sample catalogue of the test suite.
+</div>
+
+## Highlights
+
+| | |
+| --- | --- |
+| 📦 **One catalogue** | Flathub, pacman (including CachyOS) and the AUR. The same app from several sources is one entry with a source menu. |
+| 🔄 **One System Update button** | A full `pacman -Syu`, then AUR, Flatpak and AppImage updates, then a list of orphan packages. |
+| 📰 **News before upgrades** | The confirmation lists Arch and CachyOS news since your last update. |
+| 🧊 **Native Qt 6 and KDE** | It follows your KDE theme. |
 
 ## Install
 
