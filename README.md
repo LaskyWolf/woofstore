@@ -1,8 +1,11 @@
 <p align="center"><img src="icons/io.github.laskywolf.WoofStore.svg" alt="WoofStore" width="128"></p>
 
-# WoofStore
+<h1 align="center">WoofStore</h1>
 
-A native Qt 6 / KDE software store and system updater for CachyOS and Arch Linux. It shows apps from Flathub, every pacman repository and the AUR in one catalogue, installs them, keeps them updated, and shows Arch and CachyOS news.
+<p align="center">One software store and system updater for CachyOS and Arch Linux.<br>
+Native Qt 6 / KDE. Flathub, pacman repositories and the AUR in one catalogue.</p>
+
+<p align="center"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></p>
 
 ![Explore](previews/explore.png)
 
