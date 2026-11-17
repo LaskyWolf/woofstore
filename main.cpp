@@ -169,8 +169,7 @@ public:
         activityLayout->addLayout(activityActions);
         connect(clear, &QPushButton::clicked, this, [this] {
             for (auto &entry : previewOperations.activities) if (entry.progress == 100) entry.cleared = true;
-            if (busy() && !packageActivityHistory.isEmpty()) { packageActivityHistory = {packageActivityHistory.last()}; packageJobs = {packageJobs.last()}; }
-            else { packageActivityHistory.clear(); packageJobs.clear(); }
+            for (int i = packageJobs.size() - 1; i >= 0; --i) if (!isActive(packageJobs[i])) { packageJobs.removeAt(i); packageActivityHistory.removeAt(i); }  // Running and waiting operations stay
             refreshActivity();
         });
         connect(back, &QPushButton::clicked, activityDialog, &QDialog::hide);
@@ -281,7 +280,7 @@ public:
         if (!activityHistory) return;
         struct Record { QString name, state; int progress; bool unknown; };
         QList<Record> records;
-        for (const auto &entry : packageActivityHistory) records.append({entry, "Package operation", 0, busy() && entry == packageActivityHistory.last()});
+        for (int i = 0; i < packageActivityHistory.size(); ++i) records.append({packageActivityHistory[i], "Package operation", 0, i < packageJobs.size() && isActive(packageJobs[i]) && !packageJobs[i].queued});
         for (const auto &activity : previewOperations.activities) {
             if (activity.cleared) continue;
             const QString state = activity.failed ? "Failed" : activity.progress == 100 ? "Complete" : activity.real ? QString("Running") : QString::number(activity.progress) + "%";
@@ -315,7 +314,7 @@ public:
         terminalHost->setVisible(bool(part));
         const bool completed = std::any_of(previewOperations.activities.cbegin(), previewOperations.activities.cend(), [](const auto &entry) { return !entry.cleared && entry.progress == 100; });
         auto *clear = activityDialog->findChild<QPushButton *>("clearActivity");
-        const bool canClear = completed || packageActivityHistory.size() > (busy() ? 1 : 0);
+        const bool canClear = completed || std::any_of(packageJobs.cbegin(), packageJobs.cend(), [this](const JobRecord &record) { return !isActive(record); });
         clear->setEnabled(canClear); clear->setCursor(canClear ? Qt::PointingHandCursor : Qt::ArrowCursor);
         static_cast<QGraphicsOpacityEffect *>(clear->graphicsEffect())->setOpacity(canClear ? 1. : .4);
         if (!busy()) { activityStatus->setText(previewOperations.running() ? "No package changes" : QString()); activityStatus->setVisible(!activityStatus->text().isEmpty()); }
@@ -342,12 +341,12 @@ public:
         if (kind == "AppImage") {
             QStringList arguments; for (const QString &file : files) arguments << "--import-appimage" << file;
             startJob(title, QCoreApplication::applicationFilePath(), arguments, {}, {"Prepare", "Copy", "Add to menu"},
-                [](const QString &text) { return text.contains("Adding to the app menu") ? 2 : text.contains("Copying") ? 1 : 0; });
+                [](const QString &text) { return text.contains("Adding to the app menu") ? 2 : text.contains("Copying") ? 1 : 0; }, "appimage");
         } else {
             // Installing a file needs an administrator (polkit allows it only after a password), so one pkexec session installs all of them.
             const QString script = "pkexec bash -c 'for f in \"$@\"; do case \"$f\" in *.flatpakref) flatpak install --system -y --noninteractive --from \"$f\";; "
                 "*) flatpak install --system -y --noninteractive --bundle \"$f\";; esac || exit; done' woof-store-flatpak-files \"$@\"";
-            startJob(title, "bash", QStringList{"-c", script, "woof-store-flatpak-files"} + files);
+            startJob(title, "bash", QStringList{"-c", script, "woof-store-flatpak-files"} + files, {}, {}, {}, "flatpak");
         }
     }
     void removeAppImage(const App &app) {
@@ -363,7 +362,7 @@ public:
 
     // closeOnSuccess: package operations close themselves when they succeed; a failure keeps the output until Enter.
     bool startActivity(const QString &title, const QString &program, const QStringList &arguments = {}, const QString &cwd = {}, bool closeOnSuccess = false) {
-        if (part) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return false; }
+        if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return false; }
         const QString executable = QStandardPaths::findExecutable(program);
         if (executable.isEmpty()) { QMessageBox::warning(this, "Required program missing", "Install " + program + " and try again."); return false; }
         const auto metadata = KPluginMetaData::findPluginById("kf6/parts", "konsolepart");
@@ -436,11 +435,40 @@ public:
         if (launcher.isEmpty() || QStandardPaths::findExecutable("gio").isEmpty()) { statusBar()->showMessage(name + " · no launcher found", 4000); return; }
         QProcess::startDetached("gio", {"launch", launcher});
     }
+    // An operation waiting for its lane, and a button waiting for its operation to end.
+    struct Queued { int id; QString title, program; QStringList arguments; QString cwd; QStringList stepNames; std::function<int(const QString &)> stepOf; QString lane; };
+    struct PendingOperation { QString key, name, action; Package package; int jobId = 0; bool ready = false; QStringList leftovers; };
     // Runs a package operation without a terminal. Passwords come from the system: polkit for pkexec, a GUI askpass for sudo.
-    bool startJob(const QString &title, const QString &program, const QStringList &arguments, const QString &cwd = {}, const QStringList &stepNames = {}, const std::function<int(const QString &)> &stepOf = {}) {
-        if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return false; }
+    // The operation waits in a queue. Each lane (pacman, flatpak, appimage) runs one operation at a time and the lanes run side by side,
+    // because pacman locks its database but flatpak and AppImage imports do not need that lock. "system" is exclusive: it waits for
+    // every lane to be idle and nothing starts while it runs. Returns the id of the operation, 0 when it was not accepted.
+    int startJob(const QString &title, const QString &program, const QStringList &arguments, const QString &cwd = {}, const QStringList &stepNames = {}, const std::function<int(const QString &)> &stepOf = {}, const QString &lane = "system") {
+        if (part) { QMessageBox::information(this, "Operation already running", "Finish the terminal session before starting another package operation."); showActivity(); return 0; }
         const QString executable = QStandardPaths::findExecutable(program);
-        if (executable.isEmpty()) { QMessageBox::warning(this, "Required program missing", "Install " + program + " and try again."); return false; }
+        if (executable.isEmpty()) { QMessageBox::warning(this, "Required program missing", "Install " + program + " and try again."); return 0; }
+        for (const auto &record : packageJobs) if (isActive(record) && record.title == title) { statusBar()->showMessage(title + " is already running or waiting", 4000); return 0; }
+        const bool removing = title.startsWith("Remove");
+        const QStringList names = !stepNames.isEmpty() ? stepNames : removing ? QStringList{"Prepare", "Remove"} : QStringList{"Prepare", "Download", "Install"};
+        const int id = nextJobId++;
+        waiting.append({id, title, executable, arguments, cwd, names, stepOf, lane});
+        packageActivityHistory.append(title + " · Waiting in the queue"); packageJobs.append({title, names, 0, {}, false, false, id, true, {}});
+        refreshActivity();
+        pump();
+        return recordIndex(id) >= 0 ? id : 0;
+    }
+    // Starts every waiting operation that may start now, in the order they were added. An operation never overtakes an earlier one of its lane,
+    // and nothing overtakes a waiting exclusive one.
+    void pump() {
+        QSet<QString> held;
+        for (int i = 0; i < waiting.size();) {
+            const bool exclusive = waiting[i].lane == "system";
+            const bool free = exclusive ? running.isEmpty() : !running.contains("system") && !running.contains(waiting[i].lane) && !held.contains(waiting[i].lane);
+            if (!free) { if (exclusive) return; held.insert(waiting[i].lane); ++i; continue; }
+            const Queued job = waiting.takeAt(i);
+            launch(job);
+        }
+    }
+    void launch(const Queued &job) {
         // sudo has no terminal here, so it asks through this helper instead.
         const QString askpass = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/askpass.sh";
         QDir().mkpath(QFileInfo(askpass).absolutePath());
@@ -451,17 +479,37 @@ public:
         }
         auto environment = QProcessEnvironment::systemEnvironment();
         environment.insert("SUDO_ASKPASS", askpass); environment.insert("LC_ALL", "C.UTF-8");
-        const bool removing = title.startsWith("Remove");
-        const QStringList names = !stepNames.isEmpty() ? stepNames : removing ? QStringList{"Prepare", "Remove"} : QStringList{"Prepare", "Download", "Install"};
         QString error;
-        if (!launchJob(jobFolder(), title, names, executable, arguments, environment, cwd, &error)) { QMessageBox::warning(this, "Cannot start " + title, error); return false; }
-        watchJob(title, names, stepOf);
-        return true;
+        if (!launchJob(jobFolder(job.lane), job.title, job.stepNames, job.program, job.arguments, environment, job.cwd, &error)) {
+            dropRecord(job.id, true);
+            QMessageBox::warning(this, "Cannot start " + job.title, error);
+            return;
+        }
+        const bool alone = running.isEmpty();  // Only the first operation opens its window by itself; the others are followed in the Activity list
+        running.insert(job.lane, job.id);
+        const int index = recordIndex(job.id);
+        packageJobs[index].queued = false; packageActivityHistory[index] = job.title + " · Running · progress unavailable";
+        watchJob(job.id, job.title, job.stepNames, job.stepOf, job.lane, alone);
     }
-    static QString jobFolder() { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/job"; }
+    // Takes an operation that never ran out of the lists; its button goes back to what it was.
+    void dropRecord(int id, bool failedToStart) {
+        const int index = recordIndex(id);
+        if (index >= 0) { packageJobs.removeAt(index); packageActivityHistory.removeAt(index); }
+        for (int i = 0; i < pendingOps.size(); ++i) if (pendingOps[i].jobId == id) { previewOperations.cancel(pendingOps[i].key); pendingOps.removeAt(i); break; }
+        Q_UNUSED(failedToStart);
+        refreshActivity();
+    }
+    void cancelWaiting(int id) {
+        for (int i = 0; i < waiting.size(); ++i) if (waiting[i].id == id) { waiting.removeAt(i); dropRecord(id, false); pump(); return; }
+    }
+    int recordIndex(int id) const { for (int i = 0; i < packageJobs.size(); ++i) if (packageJobs[i].id == id) return i; return -1; }
+    // Waiting, running, or a terminal session in progress: the entries Clear keeps.
+    // "system" keeps the folder older versions used, so a job they started is still found.
+    static QString jobFolder(const QString &lane = "system") { return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + (lane == "system" ? "/job" : "/job-" + lane); }
+    static QStringList laneNames() { return {"system", "pacman", "flatpak", "appimage"}; }
     // Shows a job that runs outside the store (see jobrunner.h): the window, the activity record and a timer that reads its output.
     // Used for a job just started and for one found still running when the store starts.
-    void watchJob(const QString &title, const QStringList &names, const std::function<int(const QString &)> &stepOf = {}) {
+    void watchJob(int id, const QString &title, const QStringList &names, const std::function<int(const QString &)> &stepOf, const QString &lane, bool show) {
         // Without a program-specific rule, read the step from the "==> Name" lines of the update script, then from the words flatpak and pacman print.
         const auto current = std::make_shared<int>(0);
         const std::function<int(const QString &)> stepFor = stepOf ? stepOf : [names, current](const QString &text) {
@@ -472,15 +520,15 @@ public:
             return *current;
         };
         QPointer<JobDialog> dialog = new JobDialog(title, names, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
-        jobDialog = dialog;
+        packageJobs[recordIndex(id)].dialog = dialog;
         connect(dialog->close, &QPushButton::clicked, this, [this] { jobFailed = false; refreshActivity(); });
-        packageActivityHistory.append(title + " · Running · progress unavailable"); packageJobs.append({title, names, 0, {}, false, false});
-        lastResult = 0; jobRunning = true;
+        lastResult = 0;
         refreshActivity();
-        auto watcher = std::make_shared<JobWatcher>(jobFolder());
+        const QString folder = jobFolder(lane);
+        auto watcher = std::make_shared<JobWatcher>(folder);
         auto output = std::make_shared<QString>();  // The record keeps the whole output even when the window was closed
-        auto *timer = new QTimer(this); jobTimer = timer;
-        connect(timer, &QTimer::timeout, this, [this, timer, watcher, output, dialog, stepFor, title, names] {
+        auto *timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this, timer, watcher, output, dialog, stepFor, title, names, id, lane, folder] {
             const int code = watcher->poll();
             const QString text = watcher->readNew(code != JobWatcher::stillRunning);
             if (!text.isEmpty()) {
@@ -488,15 +536,17 @@ public:
                 if (dialog) { dialog->feed(text); dialog->advanceTo(stepFor(text)); }
             }
             if (code == JobWatcher::stillRunning) return;
-            timer->stop(); timer->deleteLater(); jobRunning = false;
+            timer->stop(); timer->deleteLater(); running.remove(lane); QTimer::singleShot(0, this, &Store::pump);
             const bool ok = code == 0;
-            const bool systemDone = title == "System Update" && packageJobsIncludeSystem && output->contains("==> Cache and services");  // The upgrade itself finished, whatever the later steps did
+            const bool systemDone = title == "System Update" && output->contains("==> Cache and services");  // The upgrade itself finished, whatever the later steps did
             QString lastLines; for (const QString &line : output->split('\n', Qt::SkipEmptyParts).mid(qMax(0, int(output->count('\n')) - 12))) lastLines += line.trimmed() + '\n';
             if (code < 0 && dialog) dialog->feed("The update stopped without finishing (the computer may have restarted). Run it again.");
-            if (!packageActivityHistory.isEmpty()) packageActivityHistory.last() = title + (ok ? " · Done" : " · Failed");
+            const int index = recordIndex(id);
+            if (index >= 0) packageActivityHistory[index] = title + (ok ? " · Done" : " · Failed");
             if (dialog) dialog->finish(ok, ok ? "Done" : systemDone ? "The system is updated, but a later step failed. Open the details to see which." : "It did not finish. Open the details to see why.");
-            if (!packageJobs.isEmpty()) packageJobs.last() = {title, names, dialog ? dialog->step : 0, *output, true, ok};
-            keepJobLog(jobFolder()); clearJob(jobFolder());
+            if (index >= 0) { auto &record = packageJobs[index]; record.step = dialog ? dialog->step : 0; record.log = *output; record.finished = true; record.ok = ok; }
+            for (auto &pending : pendingOps) if (pending.jobId == id) pending.ready = true;
+            keepJobLog(folder); clearJob(folder);
             if (systemDone) settings.setValue("lastSystemUpdate", QDate::currentDate().toString(Qt::ISODate));
             if (dialog) { if (ok) QTimer::singleShot(1200, dialog, &QDialog::close); else dialog->show(); }
             if (!ok) jobFailed = true;
@@ -506,15 +556,14 @@ public:
             if (inventoryEnabled && systemDone) { afterSystemUpgrade(parseServicesToRestart(*output)); return; }
             if (ok && inventoryEnabled && title == "Update WoofStore") { restartAfterUpgrade(); return; }  // The new version starts instead of the old one
             if (ok && inventoryEnabled && title == "Restart services" && restartStoreAfterJob) { restartStoreAfterJob = false; restartAfterUpgrade(); return; }
-            if (!ok) restartStoreAfterJob = false;
+            if (!ok && title == "Restart services") restartStoreAfterJob = false;
             if (inventoryEnabled) { settling = true; backend.loadInstalled(); }
             if (inventoryEnabled && title.startsWith("Update")) QTimer::singleShot(0, this, &Store::checkForUpdates);
             if (ok && inventoryEnabled && title == "System Update") { QTimer::singleShot(500, this, &Store::checkReboot); QTimer::singleShot(1500, this, [this] { showOrphans(true); }); }
         });
         timer->start(200);
-        dialog->show();
+        if (show) dialog->show();
     }
-    bool packageJobsIncludeSystem = false;  // The running System Update contains the pacman upgrade
     bool restartStoreAfterJob = false;      // The service restart that follows the upgrade is running; the store restarts after it
     // The upgrade replaced files that some services still run old copies of. The user picks which to restart, then the store restarts itself.
     void afterSystemUpgrade(const QStringList &services) {
@@ -559,15 +608,25 @@ public:
         QProcess::startDetached("sh", {"-c", "sleep 1.5; exec \"$0\"", exe});
         QCoreApplication::quit();
     }
-    // A job started by an earlier run of the store: still running, or finished while the store was closed or crashed.
+    // Jobs started by an earlier run of the store, one folder per lane: still running, or finished while the store was closed or crashed.
     void resumeJob() {
-        const JobInfo info = readJob(jobFolder());
+        for (const QString &lane : laneNames()) resumeLane(lane);
+    }
+    void resumeLane(const QString &lane) {
+        const QString folder = jobFolder(lane);
+        const JobInfo info = readJob(folder);
         if (info.state == JobState::None) return;
-        if (info.state == JobState::Running) { packageJobsIncludeSystem = info.title == "System Update"; watchJob(info.title, info.steps); return; }
+        const int id = nextJobId++;
+        if (info.state == JobState::Running) {
+            running.insert(lane, id);
+            packageActivityHistory.append(info.title + " · Running · progress unavailable"); packageJobs.append({info.title, info.steps, 0, {}, false, false, id, false, {}});
+            watchJob(id, info.title, info.steps, {}, lane, true);
+            return;
+        }
         const bool ok = info.state == JobState::Finished && info.exitCode == 0;
-        const QString log = QString::fromUtf8(readSmallFile(jobFolder() + "/job.log"));
-        packageActivityHistory.append(info.title + (ok ? " · Done" : " · Failed")); packageJobs.append({info.title, info.steps, ok ? int(info.steps.size()) : 0, log, true, ok});
-        keepJobLog(jobFolder()); clearJob(jobFolder());
+        const QString log = QString::fromUtf8(readSmallFile(folder + "/job.log"));
+        packageActivityHistory.append(info.title + (ok ? " · Done" : " · Failed")); packageJobs.append({info.title, info.steps, ok ? int(info.steps.size()) : 0, log, true, ok, id, false, {}});
+        keepJobLog(folder); clearJob(folder);
         backend.loadInstalled(); QTimer::singleShot(0, this, &Store::checkForUpdates);
         auto *box = new QMessageBox(ok ? QMessageBox::Information : QMessageBox::Warning, info.title, ok ? info.title + " finished while WoofStore was closed." :
             info.state == JobState::Interrupted ? info.title + " was interrupted (the computer may have restarted). Run it again: pacman finishes a half-done upgrade on the next run."
@@ -592,33 +651,37 @@ public:
         }
         CatalogApp app; Package package;
         if (!resolveOperation(key, &app, &package)) return false;
-        if (busy()) { QMessageBox::information(this, "Operation already running", "Finish the current activity before starting another package operation."); showActivity(); return true; }
         if (action == "Remove") { removeApp(key, name, app); return true; }
         const bool again = action == "Reinstall";
         if (package.source == Source::Flatpak) {
             QStringList arguments{"install", "--system", "-y", "--noninteractive"}; if (again) arguments << "--reinstall";
-            if (startJob((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{flatpakRemote(package.repo), package.name})) beginPending(key, name, action, package);
+            if (const int id = startJob((again ? "Reinstall " : "Install ") + name, "flatpak", arguments + QStringList{flatpakRemote(package.repo), package.name}, {}, {}, {}, "flatpak")) beginPending(key, name, action, package, id);
         } else if (package.source == Source::Repo) {
-            if (startJob((again ? "Reinstall " : "Install ") + name, "pkexec", QStringList{"pacman", "-S", "--noconfirm"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name})) beginPending(key, name, action, package);
+            if (const int id = startJob((again ? "Reinstall " : "Install ") + name, "pkexec", QStringList{"pacman", "-S", "--noconfirm"} + (again ? QStringList{} : QStringList{"--needed"}) + QStringList{package.name}, {}, {}, {}, "pacman")) beginPending(key, name, action, package, id);
         } else installAur(key, name, action, package);
         return true;
     }
-    void beginPending(const QString &key, const QString &name, const QString &action, const Package &package) {
-        pendingOp = {key, name, action, package, true, {}};
+    PendingOperation &beginPending(const QString &key, const QString &name, const QString &action, const Package &package, int jobId) {
+        pendingOps.append({key, name, action, package, jobId, false, {}});
         previewOperations.begin(key, name, action);
+        return pendingOps.last();
     }
+    // The list of installed apps is read again after every operation, and a read that a newer one replaced is thrown away,
+    // so when it arrives it already shows the result of every operation that has ended.
     void settleOperation() {
-        if (!settling || busy() || !pendingOp.active) return;
-        settling = false; pendingOp.active = false;
-        const bool installed = backend.installedPackage(pendingOp.package);
-        const bool ok = installed == (pendingOp.action != "Remove");
-        previewOperations.finish(pendingOp.key, ok);
-        if (ok && !pendingOp.leftovers.isEmpty()) {  // The package is gone; now the files the user chose
-            int removed = 0;
-            for (const auto &path : pendingOp.leftovers) removed += deleteLeftover(QDir::homePath(), path);
-            statusBar()->showMessage(QString("%1 removed · %2 leftover item(s) deleted").arg(pendingOp.name).arg(removed), 6000);
+        if (!settling) return;
+        settling = false;
+        for (int i = 0; i < pendingOps.size();) {
+            if (!pendingOps[i].ready) { ++i; continue; }
+            const PendingOperation pending = pendingOps.takeAt(i);
+            const bool ok = backend.installedPackage(pending.package) == (pending.action != "Remove");
+            previewOperations.finish(pending.key, ok);
+            if (ok && !pending.leftovers.isEmpty()) {  // The package is gone; now the files the user chose
+                int removed = 0;
+                for (const auto &path : pending.leftovers) removed += deleteLeftover(QDir::homePath(), path);
+                statusBar()->showMessage(QString("%1 removed · %2 leftover item(s) deleted").arg(pending.name).arg(removed), 6000);
+            }
         }
-        pendingOp.leftovers.clear();
     }
     void installAur(const QString &key, const QString &name, const QString &action, const Package &package) {
         for (const char *tool : {"mkarchroot", "makechrootpkg", "arch-nspawn"}) {
@@ -689,8 +752,8 @@ public:
         const QByteArray text = chrootPacmanConf(readText("/etc/pacman.conf"), readText).toUtf8();
         if (!conf.open(QIODevice::WriteOnly) || conf.write(text) != text.size() || !conf.commit()) { QMessageBox::warning(this, "Cannot prepare the build", "Cannot write " + chroot + "/pacman.conf"); return; }
         // The job keeps the reviewed folders alive through plan: it is captured by the step function below.
-        if (startJob("Install " + name + " from the AUR", "bash", QStringList{"-c", aurBuildScript(), "woof-store-aur", plan->root, action == "Reinstall" ? "" : "--needed", chroot} + items, plan->files.value(plan->root).path(),
-            {"Prepare", "Download", "Build", "Install"}, [plan](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; })) beginPending(key, name, action, package);
+        if (const int id = startJob("Install " + name + " from the AUR", "bash", QStringList{"-c", aurBuildScript(), "woof-store-aur", plan->root, action == "Reinstall" ? "" : "--needed", chroot} + items, plan->files.value(plan->root).path(),
+            {"Prepare", "Download", "Build", "Install"}, [plan](const QString &text) { return text.contains("Installing package") ? 3 : text.contains("Making package") || text.contains("Starting build") ? 2 : text.contains("Retrieving sources") ? 1 : 0; }, "pacman")) beginPending(key, name, action, package, id);
     }
     void removeApp(const QString &key, const QString &name, const CatalogApp &app) {
         Package package;
@@ -703,14 +766,13 @@ public:
         const bool flatpak = package.source == Source::Flatpak;
         RemoveDialog dialog(name, {{flatpak ? "Also remove runtimes no other app uses" : "Also remove dependencies nothing else needs", true}}, leftovers, home, this);
         if (dialog.exec() != QDialog::Accepted) return;
-        bool started;
+        int started;
         if (flatpak) {
             const QString script = dialog.options[0]->isChecked() ? "flatpak uninstall -y --noninteractive \"$1\" && flatpak uninstall -y --noninteractive --unused" : "flatpak uninstall -y --noninteractive \"$1\"";
-            started = startJob("Remove " + name, "bash", {"-c", script, "woof-store-remove", package.name});
-        } else started = startJob("Remove " + name, "pkexec", {"pacman", dialog.options[0]->isChecked() ? "-Rns" : "-Rn", "--noconfirm", package.name});
+            started = startJob("Remove " + name, "bash", {"-c", script, "woof-store-remove", package.name}, {}, {}, {}, "flatpak");
+        } else started = startJob("Remove " + name, "pkexec", {"pacman", dialog.options[0]->isChecked() ? "-Rns" : "-Rn", "--noconfirm", package.name}, {}, {}, {}, "pacman");
         if (!started) return;
-        beginPending(key, name, "Remove", package);
-        pendingOp.leftovers = dialog.chosenPaths();
+        beginPending(key, name, "Remove", package, started).leftovers = dialog.chosenPaths();
     }
 
 protected:
@@ -721,7 +783,7 @@ protected:
             showActivity();
             QMessageBox::information(this, "Terminal active", "Finish the terminal session before closing the store.");
             event->ignore();
-        } else if (jobRunning && QMessageBox::question(this, "Operation running", "The package operation keeps running without the store, and a shutdown waits for it. Close WoofStore anyway?\n\nOpen it again to see how it ended.") != QMessageBox::Yes) {
+        } else if ((!running.isEmpty() || !waiting.isEmpty()) && QMessageBox::question(this, "Operation running", "Running package operations keep going without the store, and a shutdown waits for them. Operations still waiting in the queue are dropped. Close WoofStore anyway?\n\nOpen it again to see how they ended.") != QMessageBox::Yes) {
             event->ignore();
         } else QMainWindow::closeEvent(event);
     }
@@ -733,12 +795,19 @@ private:
     QStringList packageActivityHistory;
 public:
     // What the details window of each package operation showed, parallel to packageActivityHistory; title is empty for terminal jobs.
-    struct JobRecord { QString title; QStringList steps; int step = 0; QString log; bool finished = false, ok = false; };
+    // queued: waiting for its lane. dialog: the details window while it exists. id ties the record to the queue and to the button that asked for it.
+    struct JobRecord { QString title; QStringList steps; int step = 0; QString log; bool finished = false, ok = false; int id = 0; bool queued = false; QPointer<JobDialog> dialog; };
     QList<JobRecord> packageJobs;
+    // Waiting, running, or a terminal session in progress: the entries Clear keeps.
+    bool isActive(const JobRecord &record) const { return record.queued || (!record.finished && (!record.title.isEmpty() || part)); }
     void openJob(int index) {
         if (index < 0 || index >= packageJobs.size()) return;
-        if (index == packageJobs.size() - 1 && jobDialog) { jobDialog->show(); jobDialog->raise(); jobDialog->activateWindow(); return; }
-        const JobRecord &record = packageJobs[index];
+        const JobRecord record = packageJobs[index];
+        if (record.queued) {
+            if (QMessageBox::question(this, "Remove from the queue", "Remove " + record.title + " from the queue? It has not started.") == QMessageBox::Yes) cancelWaiting(record.id);
+            return;
+        }
+        if (record.dialog) { record.dialog->show(); record.dialog->raise(); record.dialog->activateWindow(); return; }
         if (!record.finished) return;
         auto *dialog = new JobDialog(record.title, record.steps, this); dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->feed(record.log); dialog->showStep(record.step);
@@ -852,14 +921,17 @@ public:
     QTime lastUpdateCheck;
 private:
     QPointer<KParts::ReadOnlyPart> part;
-    bool jobRunning = false;  // A package operation outside the store (jobrunner.h), shown by jobDialog
-    QPointer<QTimer> jobTimer;
-    QPointer<JobDialog> jobDialog;
-    bool busy() const { return part || jobRunning; }
+    // Package operations run outside the store (jobrunner.h). running: lane -> id of its operation; waiting: not started yet, oldest first.
+public:  // The checks read the queue
+    QList<Queued> waiting;
+    QMap<QString, int> running;
+    bool busy() const { return part || !running.isEmpty() || !waiting.isEmpty(); }
+private:
+    int nextJobId = 1;
     bool jobFailed = false;
     int lastResult = 0;  // Shown on the Activity button until the Activity window is opened
     QHash<QString, int> appIndex;  // CatalogApp::key to index in backend.apps
-    struct PendingOperation { QString key, name, action; Package package; bool active = false; QStringList leftovers; } pendingOp;
+    QList<PendingOperation> pendingOps;  // Buttons waiting for their operation; ready once it has ended
     bool settling = false;
 
     QWidget *scrollPage(QVBoxLayout **content, QScrollArea *supplied = nullptr) {
@@ -1053,7 +1125,7 @@ private:
 
     void runUpdateOne(const UpdateEntry &entry) {
         if (entry.source == "WoofStore") runUpdateScript("Update WoofStore", false, false, false, false, {}, {}, entry.url);
-        else if (entry.source == "Flatpak") startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id});
+        else if (entry.source == "Flatpak") startJob("Update " + entry.name, "flatpak", {"update", "-y", "--noninteractive", entry.id}, {}, {}, {}, "flatpak");
         else runUpdateScript("Update " + entry.name, false, false, false, false, {entry});
     }
 
@@ -1071,8 +1143,8 @@ public:
         QString exe = QCoreApplication::applicationFilePath(); exe.remove(" (deleted)");
         if (!QFileInfo(exe).isExecutable()) exe = QStandardPaths::findExecutable("woof-store");
         if (!importer.isEmpty()) exe = importer;  // Tests use a stand-in that only records its arguments
-        packageJobsIncludeSystem = system;
-        if (!startJob(title, "bash", QStringList{"-c", script, "woof-store-update", exe} + items, {}, names, stepOf)) packageJobsIncludeSystem = false;
+        const bool onlyImages = !system && !aur && !flatpak && selfUrl.isEmpty();  // Downloads and copies: they do not touch pacman or flatpak
+        startJob(title, "bash", QStringList{"-c", script, "woof-store-update", exe} + items, {}, names, stepOf, onlyImages ? "appimage" : "system");
     }
 private:
 
@@ -1144,7 +1216,7 @@ public:
                 const QStringList names = chosen();
                 if (names.isEmpty() || QMessageBox::question(dialog, "Remove packages", QString("Remove %1 package(s)? This cannot be undone.").arg(names.size())) != QMessageBox::Yes) return;
                 dialog->close();
-                startJob("Remove orphan packages", "pkexec", QStringList{"pacman", "-Rns", "--noconfirm"} + names);
+                startJob("Remove orphan packages", "pkexec", QStringList{"pacman", "-Rns", "--noconfirm"} + names, {}, {}, {}, "pacman");
             });
             dialog->show();
             return dialog;
@@ -2044,6 +2116,35 @@ int main(int argc, char **argv) {
             QElapsedTimer ended; ended.start();
             while ((store.packageJobs.size() == before || !store.packageJobs.last().finished) && ended.elapsed() < 10000) QApplication::processEvents(QEventLoop::AllEvents, 50);
             passed &= store.packageJobs.size() == before + 1 && store.packageJobs.last().ok && store.packageJobs.last().log.contains("Finished step") && early;
+            ended.restart();
+            while (store.findChild<QDialog *>("jobDialog") && ended.elapsed() < 4000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+        {   // The queue: one operation per lane at a time, lanes side by side, the exclusive one alone
+            auto check = [&](int line, bool ok) { if (!ok) fprintf(stderr, "queue check failed at main.cpp:%d\n", line); passed &= ok; };
+            QTemporaryDir dir; const QString marks = dir.path() + "/marks";
+            auto script = [&](const QString &name) { return QString("echo start-%1 >> '%2'; sleep 0.6; echo end-%1 >> '%2'").arg(name, marks); };
+            const auto before = store.packageJobs.size();
+            store.startJob("Q pacman 1", "bash", {"-c", script("p1")}, {}, {"A"}, {}, "pacman");
+            store.startJob("Q pacman 2", "bash", {"-c", script("p2")}, {}, {"A"}, {}, "pacman");
+            store.startJob("Q flatpak 1", "bash", {"-c", script("f1")}, {}, {"A"}, {}, "flatpak");
+            check(__LINE__, store.running.size() == 2 && store.waiting.size() == 1 && !store.packageJobs[before].queued && store.packageJobs[before + 1].queued && !store.packageJobs[before + 2].queued);
+            check(__LINE__, store.startJob("Q pacman 2", "bash", {"-c", "true"}, {}, {}, {}, "pacman") == 0);  // The same operation twice is refused
+            const int cancelled = store.startJob("Q cancelled", "bash", {"-c", script("c")}, {}, {"A"}, {}, "pacman");
+            check(__LINE__, cancelled > 0 && store.waiting.size() == 2);
+            store.cancelWaiting(cancelled);
+            check(__LINE__, store.waiting.size() == 1 && store.recordIndex(cancelled) < 0);
+            store.startJob("Q exclusive", "bash", {"-c", script("x")}, {}, {"A"}, {}, "system");
+            store.startJob("Q flatpak 2", "bash", {"-c", script("f2")}, {}, {"A"}, {}, "flatpak");  // Waits behind the exclusive one instead of overtaking it
+            QElapsedTimer ended; ended.start();
+            while ((store.busy()) && ended.elapsed() < 20000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+            QFile file(marks); const QStringList lines = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()).split('\n', Qt::SkipEmptyParts) : QStringList();
+            auto at = [&](const QString &mark) { return lines.indexOf(mark); };
+            check(__LINE__, lines.size() == 10 && store.packageJobs.size() == before + 5);
+            check(__LINE__, at("start-f1") < at("end-p1") && at("start-p1") < at("end-f1"));  // Different lanes overlap
+            check(__LINE__, at("start-p2") > at("end-p1"));                                  // The same lane does not
+            check(__LINE__, at("start-x") > at("end-p2") && at("start-x") > at("end-f1"));   // The exclusive one waits for every lane
+            check(__LINE__, at("start-f2") > at("end-x"));                                   // and nothing overtakes it
+            for (int i = before; i < store.packageJobs.size(); ++i) check(__LINE__, store.packageJobs[i].finished && store.packageJobs[i].ok);
             ended.restart();
             while (store.findChild<QDialog *>("jobDialog") && ended.elapsed() < 4000) QApplication::processEvents(QEventLoop::AllEvents, 50);
         }

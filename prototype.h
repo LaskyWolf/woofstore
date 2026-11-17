@@ -48,6 +48,10 @@ public:
         }
         refresh();
     }
+    void cancel(const QString &id) {  // An operation that never started: its entry goes away
+        for (int i = activities.size() - 1; i >= 0; --i) if (activities[i].id == id && activities[i].real && activities[i].progress < 100) { activities.removeAt(i); break; }
+        refresh();
+    }
     void refreshButtons() { refresh(); }
     void start(const QString &id, const QString &name, const QString &action) {
         const auto *last = latest(id);
