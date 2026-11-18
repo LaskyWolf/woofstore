@@ -1,0 +1,2 @@
+# The cxx-qt bridge headers are C++, not C
+*.h linguist-language=C++
