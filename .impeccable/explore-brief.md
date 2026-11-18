@@ -23,7 +23,7 @@ FORM: Precisely specified composition, inherited native visual world. No random 
 
 ## Review evidence
 
-Desktop and narrow-desktop top viewports; discovery collection and alphabetical directory captures; the second and third carousel slides. No browser detector applies to Qt Widgets.
+Desktop and narrow-desktop top viewports; discovery collection and alphabetical directory captures; the second and third carousel slides. No browser detector applies to Qt Quick.
 
 ## App details
 

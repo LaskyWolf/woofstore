@@ -1,2 +1,6 @@
-/build/
+/target/
+/src/
+/pkg/
+*.pkg.tar.*
+.qmlls.ini
 /.impeccable/review/

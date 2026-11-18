@@ -2,7 +2,8 @@
 
 <img src=".github/assets/banner.svg" width="100%" alt="WoofStore: one store and updater for Arch Linux" />
 
-[![Qt 6](https://img.shields.io/badge/Qt-6-41CD52?logo=qt&logoColor=white)](CMakeLists.txt)
+[![Rust](https://img.shields.io/badge/Rust-cxx--qt-dea584?logo=rust&logoColor=white)](Cargo.toml)
+[![Qt 6](https://img.shields.io/badge/Qt_Quick-6-41CD52?logo=qt&logoColor=white)](woofstore-app/qml)
 [![KDE](https://img.shields.io/badge/desktop-KDE-1d99f3?logo=kde&logoColor=white)](https://kde.org)
 [![Arch Linux](https://img.shields.io/badge/Arch-CachyOS-1793d1?logo=archlinux&logoColor=white)](https://cachyos.org)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
@@ -14,7 +15,7 @@ Flathub, pacman repositories and the AUR in one catalogue.
 <img src="previews/installed.png" width="31%" alt="Installed" />&nbsp;
 <img src="previews/updates.png" width="31%" alt="Updates" />
 
-<sub>Screenshots use the small sample catalogue of the test suite.</sub>
+<sub>Screenshots use a small sample catalogue.</sub>
 
 </div>
 
@@ -25,7 +26,7 @@ Flathub, pacman repositories and the AUR in one catalogue.
 | 📦 **One catalogue** | Flathub, pacman (including CachyOS) and the AUR. The same app from several sources is one entry with a source menu. |
 | 🔄 **One System Update button** | A full `pacman -Syu`, then AUR, Flatpak and AppImage updates, then a list of orphan packages. |
 | 📰 **News before upgrades** | The confirmation lists Arch and CachyOS news since your last update. |
-| 🧊 **Native Qt 6 and KDE** | It follows your KDE theme. |
+| 🧊 **Native Qt 6 and KDE** | Rust with a Qt Quick interface in the Plasma style. It follows your KDE theme. |
 
 ## Install
 
@@ -63,15 +64,15 @@ Optional programs: `flatpak` for Flathub apps, `paru` for AUR packages and AUR u
 - **Desktop links:** the installer makes WoofStore the program for `appstream:` links and for `.flatpakref` and `.flatpak` files. KRunner's "Install" suggestions and a downloaded `.flatpakref` of a catalogue app open on that app's page; a file for an app the catalogue does not list asks before it installs. Starting the store again hands the request to the open window. By hand: `gio mime application/vnd.flatpak.ref io.github.laskywolf.WoofStore.desktop` (and the same for `application/vnd.flatpak` and `x-scheme-handler/appstream`).
 - **Activity:** history of package operations. Click an entry to reopen its window.
 
-Run the store as your normal user. Package managers ask for elevated privileges only when needed: polkit for `pkexec`, a KDialog or Zenity prompt for the `sudo` that the chroot tools and `paru` use.
+Run the store as your normal user. Steps that need root run through one small helper, `/usr/lib/woofstore/woofstore-root`, started with `pkexec`. It accepts only its own requests (install, install files, install Flatpak files, remove, upgrade, restart services) and checks every package name, file and service. Its polkit actions give the password dialog WoofStore's message, for example "WoofStore needs your password to install software.", and one password covers the next few minutes. The chroot tools and `paru` ask through `sudo`, with a KDialog or Zenity prompt.
 
 ## Installing and removing
 
 Install, Reinstall and Remove run the real package manager in the background, one operation at a time, with a progress window (steps, one status line, "Show details" for the raw output).
 
 - **Flatpak:** `flatpak install --system -y <remote> <id>`.
-- **Repository:** `pkexec pacman -S --needed --noconfirm <name>`.
-- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds in a clean chroot (package `devtools`) and installs only the built file with `pkexec pacman -U`. The chroot lives in `~/.cache/WoofStore/chroot` and uses the repositories of your `/etc/pacman.conf`, so dependencies from `multilib` or CachyOS resolve. The first build creates it (about 1 GB, a few minutes, asks for your password); later builds only update it. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Dependencies that no repository has are looked up in the AUR (up to 8 packages in all): you review the build files of each one, they are built first in the same chroot, and they are installed as dependencies before the package itself. A dependency that is neither in the repositories nor in the AUR stops the install with its name. Build files are downloaded under `~/.cache/WoofStore/aur-build`, not `/tmp`.
+- **Repository:** `pacman -S --needed --noconfirm <name>`, through the root helper.
+- **AUR:** the store downloads the build files, shows the AUR facts (maintainer, votes, dates), lists lines to read twice (downloads, `curl | sh`, install scripts, unusual source hosts, skipped checksums) and shows what changed since you last approved the package. The Build button stays off until you tick "I read the recipe". It then builds in a clean chroot (package `devtools`) and installs only the built file with `pacman -U`, through the root helper. The chroot lives in `~/.cache/WoofStore/chroot` and uses the repositories of your `/etc/pacman.conf`, so dependencies from `multilib` or CachyOS resolve. The first build creates it (about 1 GB, a few minutes, asks for your password); later builds only update it. A chroot keeps the build away from your files; it is not a sandbox, and the installed package runs as root. Dependencies that no repository has are looked up in the AUR (up to 8 packages in all): you review the build files of each one, they are built first in the same chroot, and they are installed as dependencies before the package itself. A dependency that is neither in the repositories nor in the AUR stops the install with its name. Build files are downloaded under `~/.cache/WoofStore/aur-build`, not `/tmp`.
 - **AppImage:** copied to `~/.local/share/WoofStore/appimages` and added to the app menu, without being run. Updates need the update information the publisher embeds in the file (`gh-releases-zsync` or `zsync`): the store compares the checksum of your file with the one the publisher lists, and a newer file replaces the old one.
 - **Remove:** a dialog asks what else to delete. Caches are pre-selected; settings and data (`~/.config`, `~/.local/share`, `~/.var/app`) are not. Only folders whose name equals the app or package name are offered.
 - **Open:** Flatpaks start with `flatpak run`; other apps through their desktop file.
@@ -84,20 +85,28 @@ The store contacts only these services: Flathub (catalogue, statistics), the Arc
 
 ## Development
 
-Install the dependencies:
+The code is a Cargo workspace:
+
+- `woofstore-core`: logic that needs no user interface and touches no network: job runner and lane queue, AppImage update information and import, update and AUR build scripts, catalogue model and merging, launchers, news feeds, build-file review, leftovers.
+- `woofstore-system`: access to the system and the network: commands with a time limit, HTTP with a disk cache, the catalogue, installed apps, news, rankings, AUR services, update checks, and the activity of package operations.
+- `woofstore-app`: the window, built with [cxx-qt](https://github.com/KDAB/cxx-qt) and QML in the Plasma style (qqc2-desktop-style).
+- `packaging`: the root helper and its polkit actions.
+
+Install the dependencies, then build, test and run:
 
 ```bash
-sudo pacman -S --needed base-devel cmake qt6-base kcoreaddons kparts konsole breeze-icons appstream-qt archlinux-appstream-data expac pacman-contrib polkit git flatpak
+sudo pacman -S --needed rust qt6-base qt6-declarative kirigami qqc2-desktop-style breeze-icons archlinux-appstream-data expac pacman-contrib polkit git flatpak
 ```
-
-Build, test and run:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j2
-ctest --test-dir build --output-on-failure
-./build/woof-store
+cargo test
 ```
+
+```bash
+cargo run --release -p woofstore-app
+```
+
+QML files are compiled into the program, so run `cargo run` again after editing them. The tests run the generated scripts and the root helper with stand-ins for pkexec, pacman, paru, flatpak, systemctl and curl, so they change nothing on the system. A build that is not installed runs the root helper from `packaging/`, and Plasma shows the generic pkexec password dialog instead of WoofStore's.
 
 If no Flatpak catalogue is available, configure a remote and restart the store:
 
@@ -109,20 +118,14 @@ flatpak update --user --appstream
 Catalogue data:
 
 - Repository apps get names, icons and screenshots from `archlinux-appstream-data`. Without it, Explore shows the install command.
-- The AUR package list downloads once a day (about 10 MB). Popularity rankings from Flathub and pkgstats refresh daily. Screenshots download on first view (at most 200 MB of cache).
+- The AUR package list downloads once a day (about 10 MB). Popularity rankings from Flathub and pkgstats refresh daily.
 - To add descriptions or icons for CachyOS and AUR apps, or to fix a wrong merge, see [metadata/README.md](metadata/README.md).
-- `./build/woof-store --catalog-stats` prints source counts, merge results, load time and memory use.
 
-Previews and checks run without installing anything and use the small catalogue in `tests/fixtures/`:
+Checks without a person:
 
-```bash
-QT_QPA_PLATFORM=offscreen ./build/woof-store --page news --screenshot /tmp/news.png
-QT_QPA_PLATFORM=offscreen ./build/woof-store --updates-preview available --screenshot /tmp/updates.png
-QT_QPA_PLATFORM=offscreen ./build/woof-store --installed-preview --screenshot /tmp/installed.png
-QT_QPA_PLATFORM=offscreen ./build/woof-store --explore-bottom --screenshot /tmp/explore.png
-```
-
-`--help` lists every preview and check option. `--updates-preview` takes `idle`, `checking`, `failed`, `available` or `apps`. Add `--live-catalog` to a screenshot preview to use the live sources.
+- `WOOFSTORE_QUIT_AFTER_MS=3000 WOOFSTORE_SCREENSHOT=/tmp/shot.png` makes the window save a picture of itself and quit. `WOOFSTORE_PREVIEW` picks a page and its states, for example `installed,expanded` (see `woofstore-app/qml/Main.qml`).
+- `WOOFSTORE_SCRIPT=steps.txt` (with `WOOFSTORE_QUIT_AFTER_MS` as the start delay) plays input into the window, one step per line: `wait MS`, `move X Y`, `click X Y`, `wheel X Y NOTCHES`, `type TEXT`, `key Return|Escape|Down|Up|Tab|Backspace`, `shot PATH`, `eval JS` (prints the result).
+- Add `QT_FORCE_STDERR_LOGGING=1` to see QML warnings: without a terminal Qt writes them to the system journal. Keyboard steps need an active window; run the store inside `kwin_wayland --virtual --exit-with-session <script>` to get one.
 
 ## License
 
@@ -148,4 +151,4 @@ Update tools:
 
 News feeds: [Arch Linux](https://archlinux.org/news/), [CachyOS](https://cachyos.org/blog/), [Linux kernel](https://www.kernel.org), [KDE](https://kde.org/announcements/), [LWN.net](https://lwn.net), [9to5Linux](https://9to5linux.com), [Phoronix](https://www.phoronix.com), [GamingOnLinux](https://www.gamingonlinux.com), [OMG! Ubuntu](https://www.omgubuntu.co.uk), [Fedora Magazine](https://fedoramagazine.org), [Linuxiac](https://linuxiac.com), [It's FOSS](https://itsfoss.com), [Linux Mint](https://blog.linuxmint.com), [Blender](https://www.blender.org), [Krita](https://krita.org), [Godot](https://godotengine.org), [LibreOffice](https://blog.documentfoundation.org) and [Flathub](https://docs.flathub.org/blog).
 
-Built with [Qt 6](https://www.qt.io), KDE Frameworks (KCoreAddons, KParts), [AppStream](https://www.freedesktop.org/wiki/Distributions/AppStream/), Breeze icons and glyphs from [Lucide](https://lucide.dev).
+Built with [Rust](https://www.rust-lang.org), [cxx-qt](https://github.com/KDAB/cxx-qt), [Qt 6](https://www.qt.io) Quick, Kirigami and the Plasma style for Qt Quick Controls, [AppStream](https://www.freedesktop.org/wiki/Distributions/AppStream/) data, Breeze icons and glyphs from [Lucide](https://lucide.dev).

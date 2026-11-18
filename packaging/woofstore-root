@@ -1,0 +1,78 @@
+#!/bin/bash
+# WoofStore's steps that need root. pkexec starts this file as root once polkit has asked for the password; the polkit
+# action of each verb (io.github.laskywolf.woofstore.policy) gives the password dialog its message. Only the verbs below
+# are accepted, every name and file is checked, and no text from the caller is run as a command.
+#
+#   install [--reinstall] NAME              a package from the repositories
+#   remove [--unused] NAME...               packages; --unused also removes the dependencies nothing else needs
+#   install-files [--needed] MAIN [DEP...]  built package files; DEPs first, marked as dependencies
+#   upgrade                                 the System Update: upgrade, clean the cache, list services to restart
+#   restart UNIT...                         system services
+#   flatpak-files FILE...                   .flatpakref and .flatpak files, for every user
+set -u
+
+die() { echo "woofstore-root: $*" >&2; exit 2; }
+# The store's rule for package names (valid_package_name)
+name_ok() { [[ ${#1} -le 200 && $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9@._+-]*$ ]]; }
+package_file_ok() { [[ $1 == /* && -f $1 && ! -L $1 && $1 =~ \.pkg\.tar(\.[a-z0-9]+)?$ ]]; }
+unit_ok() { [[ $1 =~ ^[A-Za-z0-9:_.@][A-Za-z0-9:_.@-]*\.service$ ]]; }
+
+verb=${1:-}
+[ $# -gt 0 ] && shift
+case $verb in
+install)
+    needed=--needed
+    if [ "${1:-}" = --reinstall ]; then needed=; shift; fi
+    [ $# -eq 1 ] && name_ok "$1" || die "expected one package name"
+    exec pacman -S --noconfirm $needed -- "$1"
+    ;;
+remove)
+    flags=-Rn
+    if [ "${1:-}" = --unused ]; then flags=-Rns; shift; fi
+    [ $# -ge 1 ] || die "expected package names"
+    for name; do name_ok "$name" || die "not a package name: $name"; done
+    exec pacman $flags --noconfirm -- "$@"
+    ;;
+install-files)
+    needed=
+    if [ "${1:-}" = --needed ]; then needed=--needed; shift; fi
+    [ $# -ge 1 ] || die "expected package files"
+    for file; do package_file_ok "$file" || die "not a package file: $file"; done
+    main=$1; shift
+    if [ $# -gt 0 ]; then pacman -U --noconfirm --asdeps --needed -- "$@" || exit; fi
+    exec pacman -U --noconfirm $needed -- "$main"
+    ;;
+upgrade)
+    [ $# -eq 0 ] || die "upgrade takes no arguments"
+    pacman -Syu --noconfirm || exit 1
+    # Problems from here on are only reported: the packages are already updated
+    echo '==> Cache and services'
+    echo 'Cleaning the package cache'
+    if command -v paccache >/dev/null; then paccache -rk3; paccache -ruk0
+    else echo 'paccache is not installed (package pacman-contrib), so the cache was not cleaned.'; fi
+    echo 'Checking which services run old files'
+    if command -v checkservices >/dev/null; then
+        # Login managers are left out: restarting one ends the session
+        ignored=()
+        for service in gdm plasmalogin sddm lightdm lxdm slim xdm greetd nodm ly lemurs; do ignored+=(-i "$service.service"); done
+        checkservices -F -P -R "${ignored[@]}" 2>/dev/null | grep '\.service' | cut -f2 -d "'" | sed 's/^/needs-restart: /'
+    else echo 'checkservices is not installed, so services were not checked.'; fi
+    exit 0
+    ;;
+restart)
+    [ $# -ge 1 ] || die "expected service names"
+    for unit; do unit_ok "$unit" || die "not a service name: $unit"; done
+    exec systemctl restart -- "$@"
+    ;;
+flatpak-files)
+    [ $# -ge 1 ] || die "expected Flatpak files"
+    for file; do [[ $file == /* && -f $file && ! -L $file && $file =~ \.flatpak(ref)?$ ]] || die "not a Flatpak file: $file"; done
+    for file; do
+        if [[ $file == *.flatpakref ]]; then flatpak install --system -y --noninteractive --from "$file" || exit
+        else flatpak install --system -y --noninteractive --bundle "$file" || exit; fi
+    done
+    ;;
+*)
+    die "unknown request: $verb"
+    ;;
+esac

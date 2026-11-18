@@ -32,15 +32,15 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 # 1. Tools to build the package
-say "Installing the build tools with pacman: base-devel cmake"
-ask_from_tty sudo pacman -S --needed ${YES:+--noconfirm} base-devel cmake
+say "Installing the build tools with pacman: base-devel"
+ask_from_tty sudo pacman -S --needed ${YES:+--noconfirm} base-devel
 
 # 2. The source
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 if [ -n "$SOURCE" ]; then
     say "Using the local source in $SOURCE"
-    tar -C "$SOURCE" --exclude=./build --exclude=./.git -cf - . | tar -C "$work" -xf -
+    tar -C "$SOURCE" --exclude=./target --exclude=./src --exclude=./pkg --exclude=./.git -cf - . | tar -C "$work" -xf -
 else
     say "Downloading WoofStore ($REF)"
     curl -fsSL "$REPO/archive/$REF.tar.gz" | tar -xz -C "$work" --strip-components=1
@@ -48,7 +48,7 @@ fi
 [ -f "$work/PKGBUILD" ] || fail "the download has no PKGBUILD. Check WOOFSTORE_REPO and WOOFSTORE_REF."
 
 # 3. Build and install the package; makepkg installs the runtime dependencies listed in the PKGBUILD
-say "Building and installing woofstore (this takes a few minutes)"
+say "Building and installing woofstore (Rust compiles for a few minutes)"
 cd "$work"
 ask_from_tty makepkg -si ${YES:+--noconfirm}
 

@@ -116,7 +116,7 @@ components:
 
 **Creative North Star: "Native KDE software discovery"**
 
-Use Quickpeek’s native KDE visual language with persistent store navigation. Native Qt Widgets and KDE Frameworks provide the controls and embedded operation terminal. Inherit the desktop's font family, colors, icon theme, and control style.
+Use Quickpeek’s native KDE visual language with persistent store navigation. Qt Quick Controls in the Plasma style (qqc2-desktop-style) provide the controls; popups are separate windows. Inherit the desktop's font family, colors, icon theme, and control style.
 
 **Key Characteristics:**
 
@@ -138,7 +138,7 @@ Use Quickpeek’s native KDE visual language with persistent store navigation. N
 
 **FINISH:** Verify desktop and narrow Explore viewports, discovery cards, the directory, and all three carousel slides. Keep asset origins and design documentation consistent. The current refinement review covers 13 captures under `.impeccable/review/refine-*.png`; its disposition is ship after documentation sync. Build and all four tests passed. Real package transactions remain untested.
 
-**Signature interaction:** Whole Explore tiles open a separate app-detail page. Back or Alt+Left restores Explore without rebuilding its filters, carousel, or scroll position. Clickable pagination bars switch the three featured slides. Installed and Updates share preview progress in Activity. The embedded terminal remains available for the harmless demo.
+**Signature interaction:** Whole Explore tiles open a separate app-detail page. Back or Alt+Left restores Explore without rebuilding its filters, carousel, or scroll position. Clickable pagination bars switch the three featured slides. Installed and Updates share preview progress in Activity.
 
 **Motion grammar:** Preserve native control behavior. App-detail screenshot changes use a 300 ms OutCubic QVariantAnimation, with circular wrap and flat rectangular neighboring previews.
 
@@ -176,7 +176,7 @@ Installed uses one shared A–Z list at every desktop width. Explore discovery r
 
 Explore uses 20 px horizontal margins, 16 px top and 24 px bottom margins, and 16 px section gaps. Categories use three columns and 10 px gaps. Discovery uses fully filled bands with 12 px gaps and two to five base columns, calculated from the container width divided by 185 px. Each band partitions its full width into a large publisher-screenshot card and paired smaller cards, or a compact row when no spotlight candidate is present. Large cards alternate position and span one or two columns. Bottles, GIMP, Obsidian, and OBS Studio are eligible spotlight apps; carousel apps are never spotlights. Band height fits every card's wrapped copy. No empty grid cells remain. Resizing recalculates geometry without reshuffling app choices. The alphabetical directory remains A–Z regardless of discovery sorting. The carousel is visible only without a query or category and when AUR is not selected. Its height is 220 px below a 650 px viewport width and 246 px otherwise. Installed puts Add AppImage, Add Flatpak, and Refresh beside its title. A centered Load more control follows the A–Z directory; it disables as All apps loaded without fetching. Updates places System Update at the bottom and Check for updates beside the status field.
 
-The sidebar contains a collapse button and Explore, Installed, and Updates buttons. Compact mode uses icon-only buttons, retains accessible names and tooltips, and preserves the current page. QSettings preserves the compact-sidebar preference. Source filtering remains in Explore. A bottom sidebar control opens a modeless Activity popup with history and embedded KonsolePart prompts. Closing the popup hides it without stopping the task.
+The sidebar contains a collapse button and Explore, Installed, and Updates buttons. Compact mode uses icon-only buttons, retains accessible names and tooltips, and preserves the current page. The settings file preserves the compact-sidebar preference. Source filtering remains in Explore. A bottom sidebar control opens a modeless Activity window with history. Closing the popup hides it without stopping the task.
 
 ## Elevation & Depth
 
@@ -264,9 +264,9 @@ Details, Explore directory, and Installed row actions share one per-app PreviewO
 
 The bottom sidebar Activity control uses the activity-control height, a 20 px themed icon. Expanded mode shows a plain icon, Activity, and a 3 px progress line. Compact mode shows the 14 px radius progress arc while busy and omits the line. Palette hover and keyboard-focus states remain visible.
 
-A modeless QDialog starts at 800 × 600 px. It uses the shared page margins and 16 px section gaps, with the activity-title role. History uses native rounded rows, 76 px high, with 14 px horizontal and 10 px vertical padding, 8 px inter-row spacing, and a 4 px progress bar. Preview rows show app, action, state, percentage, and Preview. Embedded terminal activity uses indeterminate progress and KonsolePart prompts below history; the current UI connects only the harmless demo to that terminal.
+A modeless window starts at 800 × 600 px. It uses the shared page margins and 16 px section gaps, with the activity-title role. History uses native rounded rows, 76 px high, with 14 px horizontal and 10 px vertical padding, 8 px inter-row spacing, and a 4 px progress bar. Preview rows show app, action, state, percentage, and Preview.
 
-Closing the popup hides it and leaves the task running. Main-window closing is blocked while a real package operation is active. Closed real-operation history says Ended and asks the user to check the command exit code; terminal closure alone does not establish success.
+Closing the popup hides it and leaves the task running. Main-window closing is blocked while a real package operation is active. Closed real-operation history says Ended and asks the user to check the command exit code; a closed window alone does not establish success.
 
 ## Do's and Don'ts
 

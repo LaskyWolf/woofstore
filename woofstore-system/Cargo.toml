@@ -1,0 +1,18 @@
+[package]
+name = "woofstore-system"
+description = "WoofStore access to the system and the network: commands, HTTP, catalogues, installed apps"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+woofstore-core = { path = "../woofstore-core" }
+sha1 = "0.10"
+flate2 = "1"
+hex = "0.4"
+quick-xml = "0.37"
+regex = "1"
+serde_json = "1"
+tempfile = "3"
+ureq = "2"
+wait-timeout = "0.2"

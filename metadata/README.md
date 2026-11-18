@@ -2,7 +2,7 @@
 
 This folder adds names, descriptions, icons and screenshots for packages that Flathub and Arch do not describe: CachyOS-only packages and AUR packages. WoofStore also fixes app merging with `merge-overrides.json`.
 
-WoofStore reads this folder from `share/woofstore/metadata` after `cmake --install`, and from the source tree in development builds.
+WoofStore reads this folder from `share/woofstore/metadata` in the installed package, and from the source tree when you run it with `cargo run`.
 
 ## Add an app
 
@@ -17,7 +17,7 @@ WoofStore reads this folder from `share/woofstore/metadata` after `cmake --insta
 2. Check every line against the project's own website or README. Remove anything you cannot confirm.
 3. Paste the `<component>` into `xml/woofstore.xml`. The `<pkgname>` must be the exact repo or AUR package name: that is how WoofStore attaches the entry to the package.
 4. Optional icon: a 64 × 64 PNG published by the project, saved as `icons/woofstore/64x64/<id>.png` and referenced by `<icon type="cached" width="64" height="64"><id>.png</icon>`.
-5. Run `./build/woof-store --catalog-stats` and check that the `WoofStore metadata` line counts the new entry and its icon.
+5. Run `cargo test` (it loads this folder), then `cargo run --release -p woofstore-app` and search for the app.
 
 Rules: use only the publisher's own text, icons and screenshots. AI-generated images are never allowed.
 
@@ -28,7 +28,7 @@ Rules: use only the publisher's own text, icons and screenshots. AI-generated im
 - `"merge": {"<package name>": "<AppStream ID>"}` joins a package to an app that has a different name or website.
 - `"separate": ["<package name>"]` keeps a package as its own entry.
 
-To find candidates, run `WOOFSTORE_SHOW_MERGES=1 ./build/woof-store --catalog-stats`. It prints every merge and every near miss (same name, different project).
+To check a change, run the store with `cargo run --release -p woofstore-app` and search for both names.
 
 ## Sources of the bundled files
 

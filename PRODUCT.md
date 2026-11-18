@@ -8,7 +8,7 @@ Native Linux desktop, initially CachyOS on KDE Plasma.
 
 ## Stack
 
-Qt 6 Widgets and KDE Frameworks. KonsolePart provides an embedded terminal without a custom terminal emulator.
+Rust with cxx-qt and a Qt 6 Quick interface in the Plasma style (qqc2-desktop-style, Kirigami). Package operations show their output in a job window; there is no embedded terminal.
 
 ## Users
 
@@ -36,7 +36,7 @@ Activity shows package operation history; each entry reopens its progress window
 - Download AUR build files without executing them and require review before a first build.
 - Never describe automated AUR checks as proof of safety. AUR updates skip the review step and say so.
 - Import AppImages into user storage and add desktop launchers without executing the files.
-- Preserve package-manager prompts and refuse concurrent package operations.
+- Preserve package-manager prompts. Queue package operations: one per lane (pacman, Flatpak, AppImage) at a time, lanes side by side, and a System Update alone.
 - Keep the graphical application running as the normal user; privileges come from polkit.
 
 ## Brand Commitments

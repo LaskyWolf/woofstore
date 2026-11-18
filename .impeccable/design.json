@@ -6,7 +6,7 @@
     "platform": "linux-desktop",
     "mode": "operate",
     "native": {
-      "toolkit": "Qt 6 Widgets + KDE Frameworks",
+      "toolkit": "Qt 6 Quick + qqc2-desktop-style (Rust, cxx-qt)",
       "fontFamily": "Desktop system font",
       "fixedFont": "QFontDatabase::FixedFont",
       "icons": "Desktop icon theme; Breeze fallback",
@@ -67,7 +67,7 @@
         "compactLabels": "Icon-only with accessible names and tooltips",
         "currentPage": "Preserved on collapse and expansion",
         "preferences": {
-          "storage": "QSettings",
+          "storage": "QML Settings (~/.config/WoofStore/WoofStore.conf)",
           "compactSidebar": "Persisted toggle state"
         },
         "activation": "Exclusive QButtonGroup with explicit stack switching on every click"
@@ -113,7 +113,7 @@
     },
     "review": {
       "status": "Ship: Mosaic and file/update preview refinement; 13 captures inspected; documentation synchronized",
-      "htmlCssDetector": "Inapplicable to native Qt Widgets",
+      "htmlCssDetector": "Inapplicable to native Qt Quick",
       "validation": {
         "build": "Passed",
         "ctest": "4/4 passed",
@@ -447,7 +447,7 @@
       }
     },
     "activity": {
-      "surface": "Modeless QDialog",
+      "surface": "Modeless window",
       "initialSize": [
         800,
         600
@@ -491,7 +491,7 @@
         "preview": "Simulated percentage",
         "real": "Indeterminate; percentage unavailable"
       },
-      "terminal": "Embedded KonsolePart capability; current UI connects the harmless terminal demo",
+      "terminal": "None; job windows show steps, a status line and the raw output on request",
       "popupClose": "Hides without stopping task",
       "mainWindowClose": "Blocked while real package operation is active"
     },
@@ -683,7 +683,7 @@
     {
       "name": "Activity popup",
       "kind": "custom",
-      "description": "Modeless history popup with simulated percentages, indeterminate real-operation progress, and interactive KonsolePart prompts. Closing hides without stopping the task."
+      "description": "Modeless history popup with simulated percentages, indeterminate real-operation progress,. Closing hides without stopping the task."
     },
     {
       "name": "Explore discovery tile",
@@ -739,7 +739,7 @@
   ],
   "narrative": {
     "northStar": "Native KDE software discovery",
-    "overview": "Use Quickpeek\u2019s native KDE visual language with persistent store navigation. Native Qt Widgets and KDE Frameworks provide the controls and embedded operation terminal. Inherit the desktop's font family, colors, icon theme, and control style.",
+    "overview": "Use Quickpeek\u2019s native KDE visual language with persistent store navigation. Qt Quick Controls in the Plasma style provide the controls; popups are separate windows. Inherit the desktop's font family, colors, icon theme, and control style.",
     "keyCharacteristics": [
       "Persistent navigation beside scrollable software discovery.",
       "Bundled application icons and publisher screenshots in the offline Explore prototype.",

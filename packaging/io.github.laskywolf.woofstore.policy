@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The password dialog of WoofStore's root helper: pkexec picks the action whose path and first argument match the call.
+     auth_admin_keep lets one password cover the steps that follow shortly after. -->
+<policyconfig>
+  <vendor>WoofStore</vendor>
+  <vendor_url>https://github.com/LaskyWolf/woofstore</vendor_url>
+  <icon_name>io.github.laskywolf.WoofStore</icon_name>
+
+  <action id="io.github.laskywolf.woofstore.install">
+    <description>Install software</description>
+    <message>WoofStore needs your password to install software.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">install</annotate>
+  </action>
+
+  <action id="io.github.laskywolf.woofstore.install-files">
+    <description>Install built packages</description>
+    <message>WoofStore needs your password to install software.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">install-files</annotate>
+  </action>
+
+  <action id="io.github.laskywolf.woofstore.flatpak-files">
+    <description>Install Flatpak files</description>
+    <message>WoofStore needs your password to install software for every user.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">flatpak-files</annotate>
+  </action>
+
+  <action id="io.github.laskywolf.woofstore.remove">
+    <description>Remove software</description>
+    <message>WoofStore needs your password to remove software.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">remove</annotate>
+  </action>
+
+  <action id="io.github.laskywolf.woofstore.upgrade">
+    <description>Update the system</description>
+    <message>WoofStore needs your password to update the system.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">upgrade</annotate>
+  </action>
+
+  <action id="io.github.laskywolf.woofstore.restart">
+    <description>Restart system services</description>
+    <message>WoofStore needs your password to restart system services.</message>
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/woofstore/woofstore-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">restart</annotate>
+  </action>
+</policyconfig>

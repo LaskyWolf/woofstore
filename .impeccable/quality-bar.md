@@ -10,4 +10,4 @@
 - Verify that package-manager output, ordinary input, and hidden password input remain in Activity.
 - Use the user’s Quickpeek screenshot and local Tray/toolbar source as the visual authority; retain store navigation and functions. Keep the shell uniform, headings compact, and native controls free of global stylesheet overrides.
 
-HTML/CSS detectors do not apply to this Qt Widgets artifact. Active and inactive placeholders use the theme's Text role and require at least 4.5:1 contrast. Verify changes in rendered screens, including the Updates empty-state instruction.
+HTML/CSS detectors do not apply to this Qt Quick artifact. Active and inactive placeholders use the theme's Text role and require at least 4.5:1 contrast. Verify changes in rendered screens, including the Updates empty-state instruction.
