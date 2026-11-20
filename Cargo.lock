@@ -1429,7 +1429,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "woofstore-app"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "chrono",
  "cxx",
@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "woofstore-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "chrono",
  "flate2",
@@ -1461,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "woofstore-system"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "flate2",
  "hex",
