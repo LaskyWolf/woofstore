@@ -291,7 +291,7 @@ Item {
                     }
                 }
                 HoverHandler { id: carouselHover }
-                // The wheel turns the slides instead of scrolling the page
+                // A sideways wheel or swipe turns the slides; vertical scrolling goes to the page
                 MouseArea {
                     anchors.fill: parent
                     acceptedButtons: Qt.NoButton
@@ -472,16 +472,17 @@ Item {
         // A trackpad gesture has phases and sends pixels (with angles too on Wayland); a mouse notch has neither
         const pixels = wheel.phase !== Qt.NoScrollPhase || (wheel.angleDelta.x === 0 && wheel.angleDelta.y === 0)
         const delta = pixels ? wheel.pixelDelta : wheel.angleDelta
-        const distance = Math.abs(delta.x) > Math.abs(delta.y) ? delta.x : delta.y
+        if (wheel.phase === Qt.ScrollBegin || wheel.phase === Qt.ScrollEnd || wheelPixels !== pixels) wheelDistance = 0
+        // Only sideways movement turns the slides; up and down (and a gesture's start and end) go to the page
+        if (Math.abs(delta.x) <= Math.abs(delta.y)) { wheel.accepted = false; return }
+        const distance = delta.x
         const threshold = pixels ? 60 : 120
-        if (wheel.phase === Qt.ScrollBegin || wheelPixels !== pixels) wheelDistance = 0
         // One slide per gesture: input that arrives while a slide moves is dropped, so a swipe or a fast spin turns one slide
         if (slide.running) { wheelDistance = 0; wheel.accepted = true; return }
         wheelPixels = pixels
         wheelDistance += distance
         const steps = Math.trunc(wheelDistance / threshold)
         if (steps) { wheelDistance %= threshold; advance(pixels ? steps : -steps) }  // A trackpad swipe moves the slides with the fingers
-        if (wheel.phase === Qt.ScrollEnd) wheelDistance = 0
         wheel.accepted = true
     }
 
