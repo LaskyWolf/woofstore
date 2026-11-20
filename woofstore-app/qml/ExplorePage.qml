@@ -197,7 +197,7 @@ Item {
 
     Flickable {
         id: flick
-        PageWheel { target: flick }  // Mouse wheel as in Plasma; trackpad with inertia
+        PageWheel { id: pageWheel; target: flick }  // Mouse wheel as in Plasma; trackpad with inertia
         anchors.fill: parent
         contentWidth: width
         contentHeight: column.implicitHeight + 16 + 24
@@ -346,43 +346,54 @@ Item {
             }
 
             // ── On Flathub: four lists behind one tab bar ──
-            TabBar {
-                id: tabs
+            Item {  // The tab bar, with the wheel going to the page: the style's TabBar would switch tabs on it
+                id: tabsBox
                 visible: explore.browsing && explore.featured.sections.some(s => s.apps.length > 0)
                 Layout.alignment: Qt.AlignHCenter
-                font.pointSize: Application.font.pointSize + 3
-                Accessible.name: "Flathub lists"
-                onCurrentIndexChanged: { explore.hidePreview(); Qt.callLater(explore.equalize) }
-                Repeater {
-                    model: [["Trending", "trending"], ["Popular", "star"], ["New", "sparkle"], ["Updated", "refresh"]]
-                    TabButton {
-                        id: tab
-                        required property var modelData
-                        required property int index
-                        text: modelData[0]
-                        // The style paints the tab; the Lucide glyph and the text are drawn here, so its own text goes
-                        implicitWidth: tabRow.implicitWidth + 32
-                        width: implicitWidth
-                        Component.onCompleted: background.text = Qt.binding(() => "")
-                        enabled: (explore.featured.sections[index]?.apps.length ?? 0) > 0
-                        Row {
-                            id: tabRow
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Lucide {
-                                name: tab.modelData[1]
-                                width: 16; height: 16
-                                color: tab.palette.windowText
-                                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: tabs.implicitWidth
+                implicitHeight: tabs.implicitHeight
+                TabBar {
+                    id: tabs
+                    anchors.fill: parent
+                    font.pointSize: Application.font.pointSize + 3
+                    Accessible.name: "Flathub lists"
+                    onCurrentIndexChanged: { explore.hidePreview(); Qt.callLater(explore.equalize) }
+                    Repeater {
+                        model: [["Trending", "trending"], ["Popular", "star"], ["New", "sparkle"], ["Updated", "refresh"]]
+                        TabButton {
+                            id: tab
+                            required property var modelData
+                            required property int index
+                            text: modelData[0]
+                            // The style paints the tab; the Lucide glyph and the text are drawn here, so its own text goes
+                            implicitWidth: tabRow.implicitWidth + 32
+                            width: implicitWidth
+                            Component.onCompleted: background.text = Qt.binding(() => "")
+                            enabled: (explore.featured.sections[index]?.apps.length ?? 0) > 0
+                            Row {
+                                id: tabRow
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Lucide {
+                                    name: tab.modelData[1]
+                                    width: 16; height: 16
+                                    color: tab.palette.windowText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Label { text: tab.text; font: tab.font; anchors.verticalCenter: parent.verticalCenter }
                             }
-                            Label { text: tab.text; font: tab.font; anchors.verticalCenter: parent.verticalCenter }
                         }
                     }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.NoButton
+                    onWheel: wheel => pageWheel.scroll(wheel)
                 }
             }
             Item {
                 id: lists
-                visible: tabs.visible
+                visible: tabsBox.visible
                 Layout.fillWidth: true
                 Layout.preferredHeight: masonries.itemAt(tabs.currentIndex)?.implicitHeight ?? 1
                 onWidthChanged: Qt.callLater(explore.equalize)

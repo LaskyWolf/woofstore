@@ -17,7 +17,11 @@ MouseArea {
     // The Flickable would also move on the same events and fight this handler; not interactive, it leaves them here
     Component.onCompleted: target.interactive = false
 
-    onWheel: wheel => {
+    onWheel: wheel => scroll(wheel)
+
+    // Also for items over the page that must not keep the wheel (Explore's tab bar)
+    function scroll(wheel) {
+        wheel.accepted = true  // Every wheel event ends here, even one that moves nothing
         const p = wheel.pixelDelta, a = wheel.angleDelta
         // A trackpad gesture has phases (fingers down, moving, lifted); a mouse notch has none. Without phases (X11), pixels
         // that differ from the angles still come from a trackpad: they move the content, with no glide at the end.
@@ -43,7 +47,6 @@ MouseArea {
             const from = glide.running ? glide.to : target.contentY  // Notches in a row add up
             glideTo(from - a.y / 120 * 20 * Qt.styleHints.wheelScrollLines, 150, Easing.OutCubic, true)
         }
-        wheel.accepted = true
     }
 
     function clamp(y) {
