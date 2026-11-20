@@ -43,6 +43,9 @@ impl Sources for System {
         command::run(program, args, SLOW)
     }
     fn get(&self, url: &str, first_bytes: u64) -> Result<Vec<u8>, String> {
+        if url.starts_with("https://api.github.com/") {
+            return http::github_api(&crate::paths::cache(), url);
+        }
         http::get(url, first_bytes)
     }
 }

@@ -18,7 +18,7 @@ Item {
     y: stuck ? 0 : home
     property real scrollBarWidth: 0  // The page's visible scroll bar: the bar spans the viewport beside it
     width: flickable.width - scrollBarWidth
-    height: column.implicitHeight + (stuck ? 16 : 0)
+    height: column.implicitHeight + (stuck ? 24 : 0)  // Stuck: 8 px above the content, 16 px between it and the list
 
     Rectangle {
         anchors.fill: parent

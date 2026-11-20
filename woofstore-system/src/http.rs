@@ -20,12 +20,48 @@ pub fn get(url: &str, first_bytes: u64) -> Result<Vec<u8>, String> {
         .get(url)
         .set("Accept", "application/vnd.github+json, application/xml, text/html, */*")
         .call()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| why_not(&e))?;
     let mut body = Vec::new();
     let reader = response.into_reader();
     let result = if first_bytes > 0 { reader.take(first_bytes).read_to_end(&mut body) } else { reader.take(256 << 20).read_to_end(&mut body) };
     result.map_err(|e| e.to_string())?;
     Ok(body)
+}
+
+/// The reason a request failed. GitHub allows 60 API requests an hour from one address without an account; when they
+/// are used up it answers 403 with `x-ratelimit-remaining: 0`, and the message says when it lets the store ask again.
+fn why_not(error: &ureq::Error) -> String {
+    if let ureq::Error::Status(403 | 429, response) = error {
+        if response.header("x-ratelimit-remaining") == Some("0") {
+            let reset = response.header("x-ratelimit-reset").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            return rate_limit_message(reset.saturating_sub(now));
+        }
+    }
+    error.to_string()
+}
+
+fn rate_limit_message(seconds_left: u64) -> String {
+    let minutes = seconds_left.div_ceil(60).max(1);
+    format!("GitHub's limit of 60 checks an hour is used up; it allows new checks in {minutes} minute{}.", if minutes == 1 { "" } else { "s" })
+}
+
+/// A GitHub API answer (release lists). It is reused for an hour, so starting the store often does not use up GitHub's
+/// limit; when GitHub cannot answer (offline, or the limit is used up) the last saved answer stands in.
+pub fn github_api(cache_dir: &Path, url: &str) -> Result<Vec<u8>, String> {
+    let path = cache_path(cache_dir, url);
+    if fresh(&path, Duration::from_secs(3600)) {
+        if let Ok(data) = fs::read(&path) {
+            return Ok(data);
+        }
+    }
+    match get(url, 0) {
+        Ok(body) => {
+            let _ = save(&path, &body);
+            Ok(body)
+        }
+        Err(error) => fs::read(&path).map_err(|_| error),
+    }
 }
 
 fn fresh(path: &Path, age: Duration) -> bool {
@@ -156,6 +192,25 @@ pub fn parse_httpdate(text: &str) -> Option<SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limit_message_counts_minutes() {
+        assert_eq!(rate_limit_message(0), "GitHub's limit of 60 checks an hour is used up; it allows new checks in 1 minute.");
+        assert_eq!(rate_limit_message(61), "GitHub's limit of 60 checks an hour is used up; it allows new checks in 2 minutes.");
+    }
+
+    #[test]
+    fn github_answers_are_reused_and_stand_in_when_github_fails() {
+        let cache = tempfile::tempdir().unwrap();
+        let url = "http://127.0.0.1:9/never"; // Nothing listens on port 9: every request fails
+        assert!(github_api(cache.path(), url).is_err());
+        save(&cache_path(cache.path(), url), br#"{"tag_name":"v1"}"#).unwrap();
+        assert_eq!(github_api(cache.path(), url).unwrap(), br#"{"tag_name":"v1"}"#); // Fresh: reused
+        let old = SystemTime::now() - Duration::from_secs(7200);
+        fs::File::options().write(true).open(cache_path(cache.path(), url)).unwrap().set_modified(old).unwrap();
+        // Stale, but GitHub failed: the saved copy stands in
+        assert_eq!(github_api(cache.path(), url).unwrap(), br#"{"tag_name":"v1"}"#);
+    }
 
     #[test]
     fn http_dates_round_trip() {
