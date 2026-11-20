@@ -1,5 +1,4 @@
 import QtQuick
-import org.kde.kirigami as Kirigami
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -55,7 +54,7 @@ Item {
 
     Flickable {
         id: scroll
-        Kirigami.WheelHandler { target: scroll }  // Plasma's wheel scrolling: a fixed step per notch with its smooth glide
+        PageWheel { target: scroll }  // Mouse wheel as in Plasma; trackpad with inertia
         anchors.fill: parent
         contentWidth: page.viewportWidth
         contentHeight: body.implicitHeight + 16 + 24

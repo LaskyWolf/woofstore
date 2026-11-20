@@ -1,5 +1,4 @@
 import QtQuick
-import org.kde.kirigami as Kirigami
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
@@ -198,7 +197,7 @@ Item {
 
     Flickable {
         id: flick
-        Kirigami.WheelHandler { target: flick }  // Plasma's wheel scrolling: a fixed step per notch with its smooth glide
+        PageWheel { target: flick }  // Mouse wheel as in Plasma; trackpad with inertia
         anchors.fill: parent
         contentWidth: width
         contentHeight: column.implicitHeight + 16 + 24
@@ -470,7 +469,8 @@ Item {
     property int wheelDistance: 0
     property bool wheelPixels: false
     function turnByWheel(wheel) {
-        const pixels = wheel.angleDelta.x === 0 && wheel.angleDelta.y === 0
+        // A trackpad gesture has phases and sends pixels (with angles too on Wayland); a mouse notch has neither
+        const pixels = wheel.phase !== Qt.NoScrollPhase || (wheel.angleDelta.x === 0 && wheel.angleDelta.y === 0)
         const delta = pixels ? wheel.pixelDelta : wheel.angleDelta
         const distance = Math.abs(delta.x) > Math.abs(delta.y) ? delta.x : delta.y
         const threshold = pixels ? 60 : 120
@@ -480,7 +480,7 @@ Item {
         wheelPixels = pixels
         wheelDistance += distance
         const steps = Math.trunc(wheelDistance / threshold)
-        if (steps) { wheelDistance %= threshold; advance(-steps) }
+        if (steps) { wheelDistance %= threshold; advance(pixels ? steps : -steps) }  // A trackpad swipe moves the slides with the fingers
         if (wheel.phase === Qt.ScrollEnd) wheelDistance = 0
         wheel.accepted = true
     }

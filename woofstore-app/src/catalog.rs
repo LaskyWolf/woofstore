@@ -199,7 +199,7 @@ pub struct CatalogRust {
     leftovers: HashMap<i32, Vec<PathBuf>>,
 }
 
-/// A theme icon name or a file address for Kirigami.Icon.
+/// A theme icon name or a file address for AppIcon.
 fn icon_source(app: &CatalogApp) -> String {
     if !app.icon_path.is_empty() {
         format!("file://{}", app.icon_path)

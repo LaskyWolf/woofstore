@@ -74,7 +74,7 @@ Window {
                 text: dialog.shown ? dialog.shown.text : ""
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.NoWrap
-                // KDE's default fixed font (QFontDatabase::systemFont(FixedFont) has no QML equivalent outside Kirigami)
+                // KDE's default fixed font (QFontDatabase::systemFont(FixedFont) has no QML equivalent)
                 font.family: "Hack"
             }
         }

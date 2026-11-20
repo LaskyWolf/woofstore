@@ -1,5 +1,4 @@
 import QtQuick
-import org.kde.kirigami as Kirigami
 import QtQuick.Controls
 
 // A list of checkable lines for the orphans and services windows. `model`: [{text, checked}];
@@ -16,7 +15,7 @@ Rectangle {
 
     ListView {
         id: wheelList
-        Kirigami.WheelHandler { target: wheelList }
+        PageWheel { target: wheelList }  // Mouse wheel as in Plasma; trackpad with inertia
         anchors.fill: parent
         anchors.margins: 1
         clip: true

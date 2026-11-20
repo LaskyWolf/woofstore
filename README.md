@@ -95,7 +95,7 @@ The code is a Cargo workspace:
 Install the dependencies, then build, test and run:
 
 ```bash
-sudo pacman -S --needed rust qt6-base qt6-declarative kirigami qqc2-desktop-style breeze-icons archlinux-appstream-data expac pacman-contrib polkit git flatpak
+sudo pacman -S --needed rust qt6-base qt6-declarative qqc2-desktop-style breeze-icons archlinux-appstream-data expac pacman-contrib polkit git flatpak
 ```
 
 ```bash
@@ -124,7 +124,7 @@ Catalogue data:
 Checks without a person:
 
 - `WOOFSTORE_QUIT_AFTER_MS=3000 WOOFSTORE_SCREENSHOT=/tmp/shot.png` makes the window save a picture of itself and quit. `WOOFSTORE_PREVIEW` picks a page and its states, for example `installed,expanded` (see `woofstore-app/qml/Main.qml`).
-- `WOOFSTORE_SCRIPT=steps.txt` (with `WOOFSTORE_QUIT_AFTER_MS` as the start delay) plays input into the window, one step per line: `wait MS`, `move X Y`, `click X Y`, `wheel X Y NOTCHES`, `type TEXT`, `key Return|Escape|Down|Up|Tab|Backspace`, `shot PATH`, `eval JS` (prints the result).
+- `WOOFSTORE_SCRIPT=steps.txt` (with `WOOFSTORE_QUIT_AFTER_MS` as the start delay) plays input into the window, one step per line: `wait MS`, `move X Y`, `click X Y`, `wheel X Y NOTCHES`, `touchpad X Y DX DY` (a trackpad step in pixels; `touchpad X Y 0 0` lifts the fingers), `type TEXT`, `key Return|Escape|Down|Up|Tab|Backspace`, `shot PATH`, `eval JS` (prints the result).
 - Add `QT_FORCE_STDERR_LOGGING=1` to see QML warnings: without a terminal Qt writes them to the system journal. Keyboard steps need an active window; run the store inside `kwin_wayland --virtual --exit-with-session <script>` to get one.
 
 ## License
@@ -151,4 +151,4 @@ Update tools:
 
 News feeds: [Arch Linux](https://archlinux.org/news/), [CachyOS](https://cachyos.org/blog/), [Linux kernel](https://www.kernel.org), [KDE](https://kde.org/announcements/), [LWN.net](https://lwn.net), [9to5Linux](https://9to5linux.com), [Phoronix](https://www.phoronix.com), [GamingOnLinux](https://www.gamingonlinux.com), [OMG! Ubuntu](https://www.omgubuntu.co.uk), [Fedora Magazine](https://fedoramagazine.org), [Linuxiac](https://linuxiac.com), [It's FOSS](https://itsfoss.com), [Linux Mint](https://blog.linuxmint.com), [Blender](https://www.blender.org), [Krita](https://krita.org), [Godot](https://godotengine.org), [LibreOffice](https://blog.documentfoundation.org) and [Flathub](https://docs.flathub.org/blog).
 
-Built with [Rust](https://www.rust-lang.org), [cxx-qt](https://github.com/KDAB/cxx-qt), [Qt 6](https://www.qt.io) Quick, Kirigami and the Plasma style for Qt Quick Controls, [AppStream](https://www.freedesktop.org/wiki/Distributions/AppStream/) data, Breeze icons and glyphs from [Lucide](https://lucide.dev).
+Built with [Rust](https://www.rust-lang.org), [cxx-qt](https://github.com/KDAB/cxx-qt), [Qt 6](https://www.qt.io) Quick and the Plasma style for Qt Quick Controls, [AppStream](https://www.freedesktop.org/wiki/Distributions/AppStream/) data, Breeze icons and glyphs from [Lucide](https://lucide.dev).

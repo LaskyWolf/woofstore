@@ -1,5 +1,4 @@
 import QtQuick
-import org.kde.kirigami as Kirigami
 import QtQuick.Controls
 import QtQuick.Layouts
 
@@ -34,7 +33,7 @@ Window {
 
         ListView {  // Stays, empty, under the message
             id: wheelList
-            Kirigami.WheelHandler { target: wheelList }
+            PageWheel { target: wheelList }  // Mouse wheel as in Plasma; trackpad with inertia
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 120

@@ -6,7 +6,7 @@ pkgdesc="Software store and system updater for CachyOS and Arch: Flathub, pacman
 arch=(x86_64)
 url="https://github.com/LaskyWolf/woofstore"
 license=(GPL-3.0-or-later)
-depends=(qt6-base qt6-declarative kirigami qqc2-desktop-style libnotify polkit pacman-contrib expac git diffutils breeze-icons archlinux-appstream-data)
+depends=(qt6-base qt6-declarative qqc2-desktop-style libnotify polkit pacman-contrib expac git diffutils breeze-icons archlinux-appstream-data)
 makedepends=(cargo)
 optdepends=(
   'flatpak: Flathub apps and their updates'

@@ -1,6 +1,6 @@
 [package]
 name = "woofstore-app"
-description = "WoofStore's window: Kirigami pages on top of woofstore-system"
+description = "WoofStore's window: Qt Quick pages on top of woofstore-system"
 edition.workspace = true
 license.workspace = true
 version.workspace = true

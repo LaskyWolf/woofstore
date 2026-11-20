@@ -22,6 +22,8 @@ Rectangle {
     color: palette.alternateBase
     implicitHeight: rows.implicitHeight + 28
 
+    Button { id: reinstallSize; visible: false; text: "Reinstall"; icon.name: "view-refresh" }  // Measures Reinstall for Install
+
     Column {
         id: rows
         x: 14
@@ -142,24 +144,31 @@ Rectangle {
                         readonly property string label: list.operations ? list.operations.label(row.entry) : "Install"
                         enabled: !row.busy
                         Layout.minimumHeight: 32
+                        Layout.preferredWidth: Math.max(implicitWidth, reinstallSize.implicitWidth)  // As wide as Installed's Reinstall
                         Accessible.name: label + " " + row.entry.name
                         onClicked: list.install(row.entry)
-                        contentItem: RowLayout {
-                            spacing: 6
-                            Lucide {
-                                visible: installButton.label === "Open"
-                                name: "external-link"
-                                color: installButton.palette.buttonText
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
+                        contentItem: Item {  // Icon and label centred, as in Reinstall
+                            implicitWidth: installContent.implicitWidth
+                            implicitHeight: installContent.implicitHeight
+                            RowLayout {
+                                id: installContent
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Lucide {
+                                    visible: installButton.label === "Open"
+                                    name: "external-link"
+                                    color: installButton.palette.buttonText
+                                    Layout.preferredWidth: 20
+                                    Layout.preferredHeight: 20
+                                }
+                                AppIcon {
+                                    visible: installButton.label !== "Open"
+                                    icon: "system-software-install"
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
+                                }
+                                Label { text: installButton.label; color: installButton.palette.buttonText }
                             }
-                            AppIcon {
-                                visible: installButton.label !== "Open"
-                                icon: "system-software-install"
-                                Layout.preferredWidth: 16
-                                Layout.preferredHeight: 16
-                            }
-                            Label { text: installButton.label; color: installButton.palette.buttonText }
                         }
                     }
                 }

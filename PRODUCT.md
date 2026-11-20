@@ -8,7 +8,7 @@ Native Linux desktop, initially CachyOS on KDE Plasma.
 
 ## Stack
 
-Rust with cxx-qt and a Qt 6 Quick interface in the Plasma style (qqc2-desktop-style, Kirigami). Package operations show their output in a job window; there is no embedded terminal.
+Rust with cxx-qt and a Qt 6 Quick interface in the Plasma style (qqc2-desktop-style). Package operations show their output in a job window; there is no embedded terminal.
 
 ## Users
 

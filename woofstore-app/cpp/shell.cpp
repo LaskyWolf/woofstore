@@ -102,7 +102,7 @@ int run_shell(rust::Str url, rust::Str link) {
     if (!request.isEmpty()) QMetaObject::invokeMethod(root, "openRequest", Q_ARG(QVariant, request));
 
     // For checks without a person: WOOFSTORE_SCRIPT plays input from a file, one step per line:
-    // "wait MS", "move X Y", "click X Y", "wheel X Y DY" (DY in wheel steps of 120), "type TEXT", "key NAME", "shot PATH",
+    // "wait MS", "move X Y", "click X Y", "wheel X Y DY" (DY in wheel steps of 120), "touchpad X Y DX DY" (pixels; "touchpad X Y 0 0" lifts the fingers), "type TEXT", "key NAME", "shot PATH",
     // "eval JS" (prints the result).
     // The store quits after the last step.
     if (check && qEnvironmentVariableIsSet("WOOFSTORE_SCRIPT")) {
@@ -129,6 +129,17 @@ int run_shell(rust::Str url, rust::Str link) {
             } else if (verb == "wheel") {
                 QWheelEvent e(at, global, QPoint(), QPoint(0, -int(a.value(2).toDouble() * 120)), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
                 e.setTimestamp(clock.elapsed()); QCoreApplication::sendEvent(window, &e);
+            } else if (verb == "touchpad") {  // "touchpad X Y DX DY": one trackpad event of DX, DY pixels (positive DY scrolls down)
+                // As a compositor sends them: an empty ScrollBegin when the fingers land, ScrollUpdate while they move, ScrollEnd
+                static bool touching = false;
+                const QPoint pixels(-a.value(2).toInt(), -a.value(3).toInt());
+                const auto send = [&](QPoint delta, Qt::ScrollPhase phase) {
+                    QWheelEvent e(at, global, delta, delta, Qt::NoButton, Qt::NoModifier, phase, false, Qt::MouseEventSynthesizedBySystem);
+                    e.setTimestamp(clock.elapsed()); QCoreApplication::sendEvent(window, &e);
+                };
+                if (!touching && !pixels.isNull()) send(QPoint(), Qt::ScrollBegin);
+                touching = !pixels.isNull();
+                send(pixels, touching ? Qt::ScrollUpdate : Qt::ScrollEnd);
             } else if (verb == "type" || verb == "key") {  // "type TEXT" types characters; "key NAME" presses Return, Escape, Down, Up, Tab
                 const QHash<QString, int> names = {{"Return", Qt::Key_Return}, {"Escape", Qt::Key_Escape}, {"Down", Qt::Key_Down}, {"Up", Qt::Key_Up}, {"Tab", Qt::Key_Tab}, {"Backspace", Qt::Key_Backspace}};
                 const QList<QPair<int, QString>> keys = verb == "key" ? QList<QPair<int, QString>>{{names.value(rest), QString()}} : [&] {
