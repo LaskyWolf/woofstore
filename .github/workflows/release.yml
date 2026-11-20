@@ -1,0 +1,53 @@
+# Builds the pacman package for each published release and attaches it with its checksum. The in-app updater downloads
+# these two files instead of compiling; without them it builds from the source archive.
+name: Release package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, e.g. v2.0.1
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      PACKAGE: woofstore-x86_64.pkg.tar.zst  # The name the updater asks for (RELEASE_PACKAGE in woofstore-core/src/updates.rs)
+    steps:
+      - name: Install git and the GitHub CLI
+        run: pacman -Syu --noconfirm git github-cli
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        # makepkg refuses to run as root; its -s installs the dependencies with sudo
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder .
+          sudo -u builder makepkg -s --noconfirm
+
+      - name: Check the version matches the tag
+        run: |
+          built=$(ls woofstore-[0-9]*-x86_64.pkg.tar.zst)
+          case $built in
+            "woofstore-${TAG#v}-"*) echo "Built $built" ;;
+            *) echo "::error::$built does not match $TAG; update pkgver in PKGBUILD"; exit 1 ;;
+          esac
+          cp "$built" "$PACKAGE"
+          sha256sum "$PACKAGE" > "$PACKAGE.sha256"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$PACKAGE" "$PACKAGE.sha256" --clobber --repo "$GITHUB_REPOSITORY"

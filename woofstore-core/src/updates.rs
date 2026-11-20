@@ -61,6 +61,9 @@ fn version_newer(candidate: &str, current: &str) -> bool {
 }
 
 pub const RELEASE_ARCHIVE_PREFIX: &str = "https://github.com/LaskyWolf/woofstore/archive/refs/tags/";
+/// The package .github/workflows/release.yml builds and attaches to each release, with RELEASE_PACKAGE.sha256 beside it
+const RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/LaskyWolf/woofstore/releases/download/";
+const RELEASE_PACKAGE: &str = "woofstore-x86_64.pkg.tar.zst";
 
 /// GitHub's latest-release answer against the running version: the update entry (url = source archive), or `None`
 /// when it is not newer.
@@ -93,8 +96,9 @@ pub fn parse_services_to_restart(log: &str) -> Vec<String> {
     services
 }
 
-/// What one update run includes. `self_url`: the source archive of a newer WoofStore release, built and installed as the
-/// very last step, so a failure there loses nothing else. Only the project's own release archives are accepted.
+/// What one update run includes. `self_url`: the source archive of a newer WoofStore release, installed as the very last
+/// step, so a failure there loses nothing else. The package built for that release is used when its checksum matches;
+/// otherwise the archive is built here. Only the project's own release archives are accepted.
 #[derive(Debug, Clone, Default)]
 pub struct UpdatePlan {
     pub system: bool,
@@ -154,9 +158,16 @@ pub fn update_script(plan: &UpdatePlan) -> (String, Vec<String>) {
     // The address goes into the script, so only the project's own release archives are accepted
     if let Some(url) = plan.self_url.as_deref().filter(|url| ARCHIVE.is_match(url)) {
         section("WoofStore", &mut script);
+        let tag = url.rsplit('/').next().unwrap_or_default().trim_end_matches(".tar.gz");
         script.push_str(&format!(
-            "dir=$(mktemp -d)\n\
-             if curl -fsSL '{url}' | tar -xz -C \"$dir\" --strip-components=1 && (cd \"$dir\" && makepkg -sf --noconfirm) && files=(\"$dir\"/woofstore-[0-9]*.pkg.tar.*) && pkexec \"$WOOFSTORE_ROOT\" install-files \"${{files[0]}}\"; then echo 'WoofStore updated.'; else echo '==> The WoofStore update failed.'; fail=1; fi\n\
+            "dir=$(mktemp -d); pkg=\"$dir/{RELEASE_PACKAGE}\"; built='{RELEASE_DOWNLOAD_PREFIX}{tag}/{RELEASE_PACKAGE}'\n\
+             if curl -fsSL -o \"$pkg\" \"$built\" && curl -fsSL -o \"$pkg.sha256\" \"$built.sha256\" && (cd \"$dir\" && sha256sum -c --status {RELEASE_PACKAGE}.sha256); then\n\
+             \x20 echo 'Downloaded the package built for this release.'; files=(\"$pkg\")\n\
+             else\n\
+             \x20 echo 'No package built for this release; building it here.'; rm -f \"$pkg\"\n\
+             \x20 curl -fsSL '{url}' | tar -xz -C \"$dir\" --strip-components=1 && (cd \"$dir\" && makepkg -sf --noconfirm) && files=(\"$dir\"/woofstore-[0-9]*.pkg.tar.*) || files=()\n\
+             fi\n\
+             if [ ${{#files[@]}} -gt 0 ] && pkexec \"$WOOFSTORE_ROOT\" install-files \"${{files[0]}}\"; then echo 'WoofStore updated.'; else echo '==> The WoofStore update failed.'; fail=1; fi\n\
              rm -rf \"$dir\"\n"
         ));
     }
@@ -327,6 +338,19 @@ mod tests {
                 && calls.contains("pkexec woofstore-root install-files")
         );
         assert!(at(&calls, "makepkg") < at(&calls, "pacman -U --noconfirm") && calls.contains("woofstore-9.9.9-1-x86_64.pkg.tar.zst"));
+        // The release's built package, when its checksum matches: no build
+        stubs.stub(
+            "curl",
+            "echo \"curl $*\" >> \"$LOG\"; case $4 in *.sha256) cd \"${3%/*}\" && sha256sum woofstore-x86_64.pkg.tar.zst > \"$3\";; *) echo built > \"$3\";; esac\n",
+        );
+        let (code, _, calls) = stubs.run(&only_self, &[], &[]);
+        assert!(code == 0 && !calls.contains("makepkg") && calls.contains("/releases/download/v9.9.9/woofstore-x86_64.pkg.tar.zst"));
+        assert!(calls.contains("pacman -U --noconfirm -- ") && calls.contains("/woofstore-x86_64.pkg.tar.zst\n"));
+        // A wrong checksum falls back to building
+        stubs.stub("curl", "echo \"curl $*\" >> \"$LOG\"; case $4 in *.sha256) echo '0000  woofstore-x86_64.pkg.tar.zst' > \"$3\";; *) echo built > \"$3\";; esac; [ -n \"$3\" ]\n");
+        stubs.stub("tar", "echo \"tar $*\" >> \"$LOG\"; : > \"$3/PKGBUILD\"\n");
+        let (code, _, calls) = stubs.run(&only_self, &[], &[]);
+        assert!(code == 0 && calls.contains("makepkg -sf --noconfirm"));
         // A failed build installs nothing
         stubs.stub("makepkg", "echo \"makepkg $*\" >> \"$LOG\"; exit 1\n");
         let (code, _, calls) = stubs.run(&only_self, &[], &[]);
