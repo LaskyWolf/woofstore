@@ -526,7 +526,7 @@ Item {
                     Accessible.name: "Search apps and packages"
                     Layout.fillWidth: true
                     Layout.minimumHeight: 38
-                    leftPadding: 33
+                    leftPadding: 35
                     rightPadding: text === "" ? 8 : 30
                     onTextEdited: { searchDelay.restart(); completer.update() }
                     onTextChanged: if (text === "") searchDelay.restart()
@@ -537,7 +537,7 @@ Item {
                     Keys.onDownPressed: if (completer.visible) suggestions.currentIndex = Math.min(suggestions.count - 1, suggestions.currentIndex + 1)
                     Keys.onUpPressed: if (completer.visible) suggestions.currentIndex = Math.max(-1, suggestions.currentIndex - 1)
                     Keys.onEscapePressed: event => { if (completer.visible) completer.close(); else event.accepted = false }
-                    AppIcon { x: 4; anchors.verticalCenter: parent.verticalCenter; width: 16; height: 16; icon: "edit-find" }
+                    SearchIcon {}
                     ToolButton {
                         visible: search.text !== ""
                         anchors.right: parent.right

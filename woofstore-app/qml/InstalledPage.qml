@@ -189,7 +189,7 @@ Item {
                 Layout.minimumHeight: 38
                 leftPadding: 35
                 rightPadding: clear.visible ? 30 : 8
-                AppIcon { icon: "edit-find"; x: 6; anchors.verticalCenter: parent.verticalCenter; width: 16; height: 16 }
+                SearchIcon {}
                 AbstractButton {
                     id: clear
                     visible: search.text !== ""

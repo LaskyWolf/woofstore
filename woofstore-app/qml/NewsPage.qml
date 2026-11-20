@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Shapes
 
 // News: cards in columns, the newest first. Unread news from Arch and CachyOS put the accent badge on the sidebar (Main.qml).
 // A clean page shows two articles per source and about fifteen in all until "Show more"; a search or a topic looks at everything.
@@ -161,19 +160,7 @@ Item {
                         placeholderText: "Search news"
                         Accessible.name: "Search news"
                         onTextChanged: page.extra = 0
-                        // The Breeze 16 px edit-find drawing QLineEdit shows; the icon provider would pick the 22 px one at fractional scales
-                        Shape {
-                            x: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 16
-                            height: 16
-                            preferredRendererType: Shape.CurveRenderer
-                            ShapePath {
-                                strokeColor: "transparent"
-                                fillColor: search.palette.windowText
-                                PathSvg { path: "M6.5 2C4.007 2 2 4.01 2 6.5C2 8.993 4.01 11 6.5 11C7.5636 11 8.5263 10.6188 9.2949 10.0059L13.293 14.0039L14 13.2969L10.002 9.2988C10.6176 8.529 11 7.5653 11 6.5C11 4.007 8.99 2 6.5 2ZM6.5 3C8.439 3 10 4.561 10 6.5C10 8.439 8.439 10 6.5 10C4.561 10 3 8.439 3 6.5C3 4.561 4.561 3 6.5 3Z" }
-                            }
-                        }
+                        SearchIcon {}
                         Image {
                             id: clear
                             x: parent.width - width - 8
