@@ -240,15 +240,17 @@ Item {
                     Label { text: "System Update"; color: page.pending ? palette.active.highlightedText : palette.buttonText; anchors.verticalCenter: parent.verticalCenter }
                 }
             }
-            // The accent colour while there is something for it to do; a disabled button stays grey. Active colours also in an
-            // inactive window.
-            property Item accent: Rectangle {
+            // The accent colour while there is something for it to do, drawn over the style's frame (swapping the background
+            // out and back left the button with no frame). Active colours also in an inactive window.
+            Rectangle {
+                visible: page.pending
+                anchors.fill: parent
+                z: -0.5  // Above the style's background (-1), below the label
                 radius: 6
                 color: palette.active.highlight
                 border.width: systemUpdate.activeFocus ? 2 : 1
                 border.color: systemUpdate.hovered || systemUpdate.activeFocus ? palette.active.highlightedText : palette.active.highlight
             }
-            states: State { when: page.pending; PropertyChanges { systemUpdate.background: systemUpdate.accent } }
         }
     }
 }
